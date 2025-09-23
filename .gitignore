@@ -1,0 +1,8 @@
+# Fichier d'environnement (TRÈS IMPORTANT)
+.env
+
+# Dossier de l'environnement virtuel (TRÈS IMPORTANT)
+venv/
+
+# Dossiers de cache Python
+__pycache__/
