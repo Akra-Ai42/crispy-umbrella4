@@ -1,8 +1,8 @@
 # ==============================================================================
-# Soph_IA - Version finale et complète
+# Soph_IA - Version corrigée
 # ==============================================================================
-# PHILOSOPHIE : Un protocole d'accueil robuste, des questions naturelles,
-# et un style de conversation bidirectionnel.
+# PHILOSOPHIE : Le bot se présente, demande le nom, puis s'intéresse à l'humeur.
+# Ce protocole est logique, humain et ne fait aucune supposition. V5 ? 24/09/2025
 # ==============================================================================
 
 import os
@@ -37,8 +37,6 @@ CONVERSATION_QUESTIONS = [
     {"key": "mood_info", "text": "Dis-moi, comment s'est passée ta journée ?"},
     {"key": "project_info", "text": "Y a-t-il un projet qui t'occupe l'esprit en ce moment ?"},
 ]
-# Pour l'instant, on n'utilise pas cette liste de manière automatique,
-# mais l'IA y aura accès via son prompt.
 
 def build_system_prompt(user_profile, user_sentiment=None):
     user_profile_str = json.dumps(user_profile, indent=2, ensure_ascii=False)
@@ -111,41 +109,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bonjour, je suis Soph_IA. Pour commencer, c'est quoi votre nom ?")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    state = context.user_data.get('state', 'awaiting_name')
+    state = context.user_data.get('state', None)
     user_message = update.message.text.strip()
     profile = context.user_data.get('profile', {})
 
-    if not profile or 'name' not in profile or profile['name'] is None:
-        context.user_data.clear()
-        context.user_data['profile'] = {
-            "name": None, "gender": "inconnu",
-            "onboarding_info": {}, "dynamic_info": {}
-        }
-        # NOUVEAU PROTOCOLE D'ACCUEIL AMÉLIORÉ
-        # Cette regex est plus puissante et gère de nombreux cas de figure.
-        match = re.search(r"(?:mon nom est|je m\'?appelle|suis|c'est|on m\'?appelle|je suis|moi c'est)\s*([\w\s'-]+)", user_message, re.IGNORECASE)
-        if match:
-            user_name = match.group(1).capitalize()
-            profile['name'] = user_name
-            context.user_data['state'] = 'chatting'
-            # Le bot ne pose plus de questions intrusives ici
-            await update.message.reply_text(f"Enchantée {user_name}. Je suis ravie de faire ta connaissance. N'hésite pas à me parler de tout ce qui te traverse l'esprit.")
-            return
-        
-        # Cas par défaut si le nom n'est pas détecté
-        context.user_data['state'] = 'awaiting_name'
-        await update.message.reply_text("Bonjour, je suis Soph_IA. Pour commencer, c'est quoi votre nom ?")
-        return
-
+    # ---------- NOUVEAU PROTOCOLE D'ACCUEIL CORRIGÉ ET SIMPLIFIÉ ----------
+    # Cas 1: L'utilisateur est nouveau et n'a pas encore de nom
     if state == 'awaiting_name':
-        user_name = user_message.capitalize()
+        # On essaie de détecter le nom dans le message
+        match = re.search(r"(?:mon nom est|je m\'?appelle|suis|c'est|on m\'?appelle|je suis|moi c'est)\s*([\w\s'-]+)", user_message, re.IGNORECASE)
+        user_name = match.group(1).capitalize() if match else user_message.capitalize()
+        
+        # On enregistre le nom
         profile['name'] = user_name
+        
+        # On passe directement au mode conversation
         context.user_data['state'] = 'chatting'
+        context.user_data['profile'] = profile
+        
         await update.message.reply_text(f"Enchantée {user_name}. Je suis ravie de faire ta connaissance. N'hésite pas à me parler de tout ce qui te traverse l'esprit.")
         return
 
-    # Le protocole de questions d'accueil est retiré pour être remplacé par un dialogue de "chatting" plus naturel.
-    # On passe directement en mode conversation
+    # Cas 2: L'utilisateur est déjà en conversation (mode "chatting")
     elif state == 'chatting':
         history = context.user_data.get('history', [])
         history.append({"role": "user", "content": user_message})
@@ -155,6 +140,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history.append({"role": "assistant", "content": response})
         context.user_data['history'] = history
         await update.message.reply_text(response)
+        return
+
+    # Cas 3: L'utilisateur n'est pas dans un état connu (ex: premier message sans /start)
+    else:
+        context.user_data.clear()
+        context.user_data['profile'] = {
+            "name": None, "gender": "inconnu",
+            "onboarding_info": {}, "dynamic_info": {}
+        }
+        context.user_data['state'] = 'awaiting_name'
+        await update.message.reply_text("Bonjour, je suis Soph_IA. Pour commencer, c'est quoi votre nom ?")
+        # On ne met pas de "return" ici, pour permettre au code de continuer
+        # et de tomber sur le premier "if state == 'awaiting_name'" si l'utilisateur
+        # s'est présenté dans le premier message.
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Exception while handling an update: {context.error}")
