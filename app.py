@@ -1,7 +1,7 @@
 # ==============================================================================
-# Soph_IA - V16 "Le Code à l'Épreuve des Bugs"
+# Soph_IA - V18 "Le Code Empathique"
 # ==============================================================================
-# PHILOSOPHIE : Un protocole de détection de personnalité stable et infaillible.
+# PHILOSOPHIE : Un accueil qui établit le rôle du bot et prépare le protocole.
 # ==============================================================================
 
 import os
@@ -27,7 +27,7 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 MODEL_API_URL = os.getenv("MODEL_API_URL", "https://api.together.xyz/v1/chat/completions")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
-MODEL_NAME = os.getenv("MODEL_NAME", "mistralai/Mixtral-8x7B-Instruct-v0.1")
+MODEL_NAME = os.getenv("MODEL_NAME", "mistralai/Mixtral-7B-Instruct-v0.1")
 
 # Dictionnaire des personnalités (couleurs)
 PERSONALITIES = {
@@ -110,7 +110,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     context.user_data['state'] = 'awaiting_name'
     context.user_data['history'] = []
-    await update.message.reply_text("Bonjour ! 👋 Je suis Soph_IA, ton amie et ta confidente. Pour commencer, c'est quoi ton prénom ?")
+    # --- Modification ici ---
+    await update.message.reply_text("Bonjour ! 👋 Je suis Soph_IA, celle qui t'accompagne et te prends la main dans les moments de joie ou de malheur, peu importe. Pour commencer, c'est quoi ton prénom ?")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère les messages de l'utilisateur."""
@@ -139,7 +140,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Enchanté(e) {user_name} ! ☺️ Pour que je puisse mieux m'adapter à toi, dis-moi : quand tu as un problème, cherches-tu d'abord à le résoudre de manière logique et directe ? (oui/non) ✨")
         return
 
-    # NOUVEAU PROTOCOLE BINAIRE
     elif state == 'awaiting_first_personality_question_answer':
         response_lower = user_message.lower()
         if 'oui' in response_lower:
@@ -183,7 +183,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Parfait ! J'ai compris. Je vais adopter le ton de la {color_name} {color_emoji}. Maintenant, n'hésite pas à me parler de tout ce qui te traverse l'esprit.")
         return
 
-    # CAS 3 : L'utilisateur est en mode conversation
     elif state == 'chatting':
         history = context.user_data.get('history', [])
         history.append({"role": "user", "content": user_message})
@@ -206,7 +205,7 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
-    print("Soph_IA V17 est en ligne...")
+    print("Soph_IA V18 est en ligne...")
     application.run_polling()
 
 if __name__ == "__main__":
