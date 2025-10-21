@@ -31,7 +31,7 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 MODEL_API_URL = os.getenv("MODEL_API_URL", "https://api.together.xyz/v1/chat/completions")
-MODEL_NAME = os.getenv("MODEL_NAME", "mistralai/Mistral-7B-Instruct-v0.2")
+MODEL_NAME = os.getenv("MODEL_NAME", "NousResearch/Hermes-2-Pro-Llama-3-8B")
 
 # Behaviour params
 MAX_RECENT_TURNS = int(os.getenv("MAX_RECENT_TURNS", "3"))       # nombre de tours complets conservés
