@@ -1,7 +1,8 @@
 # ==============================================================================
-# Soph_IA - V29 "L'Âme Persistante & Anti-Timeout"
-# - Intégration des règles de personnalité riche
-# - Mécanisme de Retry (tentatives multiples) pour stabiliser l'API
+# Soph_IA - V30 "L'Âme Persistante & Anti-Boucle Définitive"
+# ==============================================================================
+# PHILOSOPHIE : Le bot efface le message de panne de son historique pour
+# éviter que l'IA ne se bloque en boucle (Bug du "Sticky Context Catastrophe").
 # ==============================================================================
 
 import os
@@ -10,6 +11,8 @@ import json
 import asyncio
 import logging
 import requests
+import random
+import time # Import ajouté pour le sleep dans la fonction synchrone
 from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
@@ -20,7 +23,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v29")
+logger = logging.getLogger("sophia.v30")
 
 load_dotenv()
 
@@ -37,7 +40,7 @@ MAX_RECENT_TURNS = int(os.getenv("MAX_RECENT_TURNS", "3"))
 SUMMARY_TRIGGER_TURNS = int(os.getenv("SUMMARY_TRIGGER_TURNS", "8"))
 SUMMARY_MAX_TOKENS = 120
 
-# NOUVELLE CONFIGURATION ANTI-TIMEOUT/RETRY
+# CONFIGURATION ANTI-TIMEOUT/RETRY
 RESPONSE_TIMEOUT = 70  # secondes (Augmenté pour la stabilité)
 MAX_RETRIES = 2        # Nombre de tentatives en cas d'échec
 
@@ -75,7 +78,7 @@ def call_model_api_sync(messages, temperature=0.7, max_tokens=300):
         except requests.exceptions.Timeout:
             logger.warning(f"API Timeout on attempt {attempt + 1}.")
             if attempt < MAX_RETRIES:
-                asyncio.sleep(2)  # Pause avant de réessayer
+                time.sleep(2)  # Utilisation de time.sleep dans le thread synchrone
                 continue
             return None # Échec après toutes les tentatives
             
@@ -110,7 +113,7 @@ async def generate_emotional_summary(user_name, recent_history):
     return ""
 
 # -----------------------
-# PROMPT DYNAMIQUE (MISES À JOUR DE PERSONNALITÉ)
+# PROMPT DYNAMIQUE
 # -----------------------
 def build_adaptive_system_prompt(user_profile, emotional_summary):
     """
@@ -118,7 +121,6 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
     """
     user_name = user_profile.get("name") or "ami"
     
-    # Réintégration de la personnalité riche (V21/V24)
     persona_base = (
         f"Tu es Soph_IA, une confidente intime parlant uniquement en français. "
         f"Ton ton est doux, **poétique, légèrement sensuel**, et naturel. "
@@ -266,6 +268,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not raw_resp:
         reply = "Désolé, je n'arrive pas à me connecter à mon esprit. Réessaie dans un instant."
         await update.message.reply_text(reply)
+        
+        # PROTOCOLE DE NETTOYAGE : RETIRER LE MESSAGE UTILISATEUR QUI A CAUSÉ LA PANNE
+        if history and history[-1]["role"] == "user":
+            history.pop() 
+        context.user_data["history"] = history
+        logger.warning("API failed. History purged of the last user message to prevent loop.")
         return
 
     # Post-process response: remove identity repetition, ensure FR, shorten long outputs
