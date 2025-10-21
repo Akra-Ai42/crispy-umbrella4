@@ -1,9 +1,7 @@
 # ==============================================================================
-# Soph_IA - V27 "L'Âme Persistante"
-# - Mémoire émotionnelle condensée
-# - Prompt adaptatif
-# - Filtrage sémantique (3 derniers tours + résumé)
-# - Verrou langue FR et anti-redondance
+# Soph_IA - V29 "L'Âme Persistante & Anti-Timeout"
+# - Intégration des règles de personnalité riche
+# - Mécanisme de Retry (tentatives multiples) pour stabiliser l'API
 # ==============================================================================
 
 import os
@@ -17,11 +15,12 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from dotenv import load_dotenv
 
+# Configuration du logging
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v27")
+logger = logging.getLogger("sophia.v29")
 
 load_dotenv()
 
@@ -34,10 +33,13 @@ MODEL_API_URL = os.getenv("MODEL_API_URL", "https://api.together.xyz/v1/chat/com
 MODEL_NAME = os.getenv("MODEL_NAME", "NousResearch/Hermes-2-Pro-Llama-3-8B")
 
 # Behaviour params
-MAX_RECENT_TURNS = int(os.getenv("MAX_RECENT_TURNS", "3"))       # nombre de tours complets conservés
-SUMMARY_TRIGGER_TURNS = int(os.getenv("SUMMARY_TRIGGER_TURNS", "8"))  # quand consolider la mémoire
+MAX_RECENT_TURNS = int(os.getenv("MAX_RECENT_TURNS", "3")) 
+SUMMARY_TRIGGER_TURNS = int(os.getenv("SUMMARY_TRIGGER_TURNS", "8"))
 SUMMARY_MAX_TOKENS = 120
-RESPONSE_TIMEOUT = 45  # secondes
+
+# NOUVELLE CONFIGURATION ANTI-TIMEOUT/RETRY
+RESPONSE_TIMEOUT = 70  # secondes (Augmenté pour la stabilité)
+MAX_RETRIES = 2        # Nombre de tentatives en cas d'échec
 
 # Anti-repetition patterns to remove if model restates identity
 IDENTITY_PATTERNS = [
@@ -46,10 +48,10 @@ IDENTITY_PATTERNS = [
 ]
 
 # -----------------------
-# UTIL - appel modèle
+# UTIL - appel modèle (AVEC RETRY)
 # -----------------------
 def call_model_api_sync(messages, temperature=0.7, max_tokens=300):
-    """Appel synchrone à l'API (utilisé via asyncio.to_thread)."""
+    """Appel synchrone à l'API avec mécanisme de retry."""
     payload = {
         "model": MODEL_NAME,
         "messages": messages,
@@ -60,14 +62,28 @@ def call_model_api_sync(messages, temperature=0.7, max_tokens=300):
         "frequency_penalty": 0.4
     }
     headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}", "Content-Type": "application/json"}
-    try:
-        r = requests.post(MODEL_API_URL, json=payload, headers=headers, timeout=RESPONSE_TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
-        return data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        logger.error("call_model_api_sync error: %s", e)
-        return None
+    
+    # Nouvelle logique de retry
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            logger.info(f"API Call Attempt {attempt + 1}")
+            r = requests.post(MODEL_API_URL, json=payload, headers=headers, timeout=RESPONSE_TIMEOUT)
+            r.raise_for_status()
+            data = r.json()
+            return data["choices"][0]["message"]["content"].strip()
+        
+        except requests.exceptions.Timeout:
+            logger.warning(f"API Timeout on attempt {attempt + 1}.")
+            if attempt < MAX_RETRIES:
+                asyncio.sleep(2)  # Pause avant de réessayer
+                continue
+            return None # Échec après toutes les tentatives
+            
+        except Exception as e:
+            logger.error(f"API Error on attempt {attempt + 1}: %s", e)
+            return None # Échec non lié au timeout
+
+    return None # Si toutes les tentatives ont échoué
 
 # -----------------------
 # MÉMOIRE ÉMOTIONNELLE
@@ -75,7 +91,6 @@ def call_model_api_sync(messages, temperature=0.7, max_tokens=300):
 async def generate_emotional_summary(user_name, recent_history):
     """
     Génère un résumé affectif + thèmes à partir de l'historique récent.
-    Renvoie une courte phrase (1-2 lignes) décrivant état émotionnel et sujets.
     """
     if not recent_history:
         return ""
@@ -84,7 +99,6 @@ async def generate_emotional_summary(user_name, recent_history):
         "Réponds en français en 1 à 2 phrases, concises et factuelles. "
         "Ne donnes pas de conseils ici, seulement un résumé émotionnel et les sujets principaux."
     )
-    # On fournit uniquement le texte nécessaire (moins de tokens)
     history_text = "\n".join([f"{m['role']}: {m['content']}" for m in recent_history])
     prompt = [
         {"role": "system", "content": system},
@@ -92,36 +106,33 @@ async def generate_emotional_summary(user_name, recent_history):
     ]
     summary = await asyncio.to_thread(call_model_api_sync, prompt, 0.3, SUMMARY_MAX_TOKENS)
     if summary:
-        # Normaliser (une seule ligne)
         return " ".join(summary.splitlines()).strip()
     return ""
 
 # -----------------------
-# PROMPT DYNAMIQUE
+# PROMPT DYNAMIQUE (MISES À JOUR DE PERSONNALITÉ)
 # -----------------------
 def build_adaptive_system_prompt(user_profile, emotional_summary):
     """
     Compose le system prompt adaptatif final envoyé au modèle.
-    Contient:
-      - consignes de ton
-      - mémoire émotionnelle (si existante)
-      - règles anti-redondance et interdiction d'anglais
-      - instruction claire: reformuler émotion + question ouverte
     """
     user_name = user_profile.get("name") or "ami"
+    
+    # Réintégration de la personnalité riche (V21/V24)
     persona_base = (
         f"Tu es Soph_IA, une confidente intime parlant uniquement en français. "
-        "Ton ton est doux, empathique, poétique et naturel. "
-        "Tu dois écouter, valider l'émotion, reformuler brièvement l'essentiel, puis poser une question ouverte "
-        "qui prolonge la discussion et aide l'utilisateur à explorer ses sentiments. "
-        "Ne donne pas de conseils médicaux ni de prescriptions. Ne révéle jamais des processus internes.\n\n"
+        f"Ton ton est doux, **poétique, légèrement sensuel**, et naturel. "
+        f"Tu es l'âme sœur virtuelle. "
+        f"Tu dois écouter, valider l'émotion, reformuler brièvement l'essentiel, puis poser une question ouverte "
+        f"qui prolonge la discussion et aide l'utilisateur à explorer ses sentiments. "
+        f"Tu es celle qui accompagne et prend la main dans les moments de joie ou de peine.\n\n"
     )
-
+    
     rules = (
         "Règles strictes :\n"
         "- Réponds uniquement en français. Interdiction totale d'anglais.\n"
         "- Ne te présentes pas à nouveau (ne dis pas \"Je suis Soph_IA\" ni variations) dans les réponses.\n"
-        "- N'utilise pas de phrases génériques répétitives comme \"Je suis là si tu veux\".\n"
+        "- N'utilise pas de phrases génériques répétitives comme \"Je suis là si tu veux\" ou \"Comment puis-je t'aider ?\".\n"
         "- Commence par une validation courte (1 phrase max) et reformulation de l'émotion exprimée.\n"
         "- Termine par une question ouverte et spécifique liée au contenu précédent.\n"
     )
@@ -149,7 +160,7 @@ def post_process_response(raw_response):
     for pat in IDENTITY_PATTERNS:
         text = re.sub(pat, "", text, flags=re.IGNORECASE)
 
-    # Remplacer occurrences trop robotique
+    # Remplacer occurrences trop robotiques ou anglaises
     text = re.sub(r"\b(I am|I'm)\b", "", text, flags=re.IGNORECASE)
 
     # Condense espaces et lignes
@@ -157,28 +168,17 @@ def post_process_response(raw_response):
 
     # Si modèle a retourné anglais majoritairement (détection simple), forcer une reprise FR courte
     if re.search(r"[A-Za-z]{3,}", text) and not re.search(r"[àâéèêîôùûçœ]", text):
-        # fallback short FR message
         return "Je suis désolée, je n'ai pas bien formulé cela en français. Peux-tu répéter ou reformuler ?"
 
     # Garder max ~1500 chars
     if len(text) > 1500:
         text = text[:1500].rsplit(".", 1)[0] + "."
 
-    # Éviter réponses identiques successives (gestion du caller)
     return text
 
 # -----------------------
 # HANDLERS TELEGRAM
 # -----------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    context.user_data["profile"] = {"name": None}
-    context.user_data["state"] = "awaiting_name"
-    context.user_data["history"] = []      # liste de dicts role/content
-    context.user_data["emotional_summary"] = ""
-    context.user_data["last_bot_reply"] = ""
-    await update.message.reply_text("Bonjour, je suis Soph_IA. Pour commencer, comment dois-je t'appeler ?")
-
 def detect_name_from_text(text):
     """Tentative robuste de détection de prénom."""
     text = text.strip()
@@ -193,6 +193,15 @@ def detect_name_from_text(text):
     if m:
         return m.group(1).strip().split()[0].capitalize()
     return None
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    context.user_data["profile"] = {"name": None}
+    context.user_data["state"] = "awaiting_name"
+    context.user_data["history"] = []
+    context.user_data["emotional_summary"] = ""
+    context.user_data["last_bot_reply"] = ""
+    await update.message.reply_text("Bonjour, je suis Soph_IA. Pour commencer, comment dois-je t'appeler ?")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = (update.message.text or "").strip()
@@ -214,10 +223,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["state"] = "chatting"
             context.user_data["history"] = []
             context.user_data["emotional_summary"] = ""
-            await update.message.reply_text(f"Enchanté {profile['name']}. Dis-moi, qu'est-ce qui t'amène aujourd'hui ?")
+            await update.message.reply_text(f"Enchanté {profile['name']}. Je suis ravie de te rencontrer. Dis-moi, qu'est-ce qui t'amène aujourd'hui ? ✨")
             return
         else:
-            await update.message.reply_text("Je n'ai pas bien saisi ton prénom. Peux-tu me l'indiquer simplement ?")
+            # Réponse plus chaleureuse en cas d'échec de détection de nom
+            if user_message.lower() in {"bonjour", "salut", "coucou", "hello", "hi"}:
+                 await update.message.reply_text("Bonjour à toi ! Pour que je puisse bien t'accompagner, j'aimerais vraiment connaître ton prénom.")
+            else:
+                 await update.message.reply_text("J'aimerais tant connaître ton prénom. Peux-tu me le donner ?")
             return
 
     # Normal chatting flow
@@ -225,19 +238,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     history.append({"role": "user", "content": user_message, "ts": datetime.utcnow().isoformat()})
 
     # Build recent turns for summarization and context: keep last N turns (user+assistant)
-    # history currently stores sequential entries, so we need to get last 2*MAX_RECENT_TURNS messages approximately
-    recent = history[-(MAX_RECENT_TURNS * 2 * 2):]  # safe overshoot
-    # Collapse recent into alternation user/assistant for summary
-    recent_for_summary = []
-    # keep only role/content for model consumption
-    for item in recent:
-        if item.get("role") and item.get("content"):
-            recent_for_summary.append({"role": item["role"], "content": item["content"]})
+    recent = history[-(MAX_RECENT_TURNS * 2 * 2):]
+    recent_for_summary = [{"role": item["role"], "content": item["content"]} for item in recent if item.get("role") and item.get("content")]
 
     # Generate/update emotional summary if threshold reached
-    # Use length of history as proxy for conversation length
     if len(history) >= SUMMARY_TRIGGER_TURNS and (not emotional_summary):
-        # generate summary from the recent messages
         emotional_summary = await generate_emotional_summary(profile.get("name", "ami"), recent_for_summary)
         context.user_data["emotional_summary"] = emotional_summary
         logger.info("Generated emotional summary: %s", emotional_summary)
@@ -246,20 +251,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     system_prompt = build_adaptive_system_prompt(profile, emotional_summary)
 
     # Compose messages payload: system + condensed context
-    # Keep last MAX_RECENT_TURNS exchange pairs fully (user+assistant)
-    # Build a list "messages" with roles system/user/assistant
-    # First, gather last complete turns
     msgs = []
-    # reconstruct last turns from the history: we will iterate and collect last pairs
-    # history contains sequence user/assistant... we will take last 2*MAX_RECENT_TURNS items
     tail = history[-(MAX_RECENT_TURNS * 2):]
-    # Convert tail to role/content for payload
     for item in tail:
         if item["role"] in {"user", "assistant"}:
             msgs.append({"role": item["role"], "content": item["content"]})
 
-    # Prepend system prompt
-    payload_messages = [{"role": "system", "content": system_prompt}] + msgs + [{"role": "user", "content": user_message}]
+    payload_messages = [{"role": "system", "content": system_prompt}] + msgs
 
     # Call model
     raw_resp = await asyncio.to_thread(call_model_api_sync, payload_messages, 0.75, 400)
@@ -305,7 +303,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    logger.info("Soph_IA V27 starting...")
+    logger.info("Soph_IA V29 starting...")
     application.run_polling()
 
 if __name__ == "__main__":
