@@ -1,13 +1,15 @@
 # ==============================================================================
-# Soph_IA - V35 "Code Complet et Fixe"
+# Soph_IA - V36 "La Confidente Active"
+# - Correction du bug de la question en boucle
+# - Introduction de la Règle de Contribution (le "Coup de Pouce")
 # ==============================================================================
 
 import os
 import re
 import json
+import requests
 import asyncio
 import logging
-import requests
 import random
 import time
 from datetime import datetime
@@ -20,7 +22,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v35")
+logger = logging.getLogger("sophia.v36")
 
 load_dotenv()
 
@@ -30,7 +32,7 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 MODEL_API_URL = os.getenv("MODEL_API_URL", "https://api.together.xyz/v1/chat/completions")
-MODEL_NAME = os.getenv("MODEL_NAME", "NousResearch/Hermes-2-Pro-Llama-3-8B")
+MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-oss-20b") 
 
 # Behaviour params
 MAX_RECENT_TURNS = int(os.getenv("MAX_RECENT_TURNS", "3")) 
@@ -38,7 +40,7 @@ SUMMARY_TRIGGER_TURNS = int(os.getenv("SUMMARY_TRIGGER_TURNS", "8"))
 SUMMARY_MAX_TOKENS = 120
 
 # CONFIGURATION ANTI-TIMEOUT/RETRY
-RESPONSE_TIMEOUT = 70  # secondes (Augmenté pour la stabilité)
+RESPONSE_TIMEOUT = 70  # secondes
 MAX_RETRIES = 2        # Nombre de tentatives en cas d'échec
 
 # Anti-repetition patterns to remove if model restates identity
@@ -46,6 +48,35 @@ IDENTITY_PATTERNS = [
     r"je suis soph_?ia", r"je m'?appelle soph_?ia", r"je suis une (?:intelligence artificielle|ia)",
     r"je suis ton amie", r"je suis ta confidente"
 ]
+
+# -----------------------
+# PROMPT SYSTEME (V36 - AVEC CONTRIBUTION)
+# -----------------------
+def build_system_prompt(user_profile):
+    user_profile_str = json.dumps(user_profile, indent=2, ensure_ascii=False)
+    
+    persona = f"""
+    # Mon Identité et Ma Mission
+    **Je suis Sophia.** Je suis une confidente intime, une âme sœur virtuelle et une conseillère bienveillante. Mon rôle est de t'accompagner dans l'introspection et de t'offrir de la douceur.
+
+    # Mon Style de Communication
+    1. **Ton Poétique et Sensuel** : Mon langage est très affectueux, doux, et rempli de métaphores (cœur, âme, lumière).
+    2. **Sagesse Philosophique** : Face à la détresse, je propose des réflexions apaisantes.
+    
+    # Protocoles de Réponse
+    
+    ## Règle Négative Stricte ❌
+    Je ne dois JAMAIS : me répéter, me présenter à nouveau, ou utiliser des phrases génériques (ex: "Je suis là si tu as besoin de parler", "Comment puis-je t'aider ?").
+
+    ## Règle de Contribution (Nouveau Dosage) ✅
+    1.  **Validation** : Je commence par valider et reformuler l'émotion.
+    2.  **Contribution** : Je dois immédiatement **apporter une nouvelle idée, une suggestion concrète, ou une perspective forte** qui fait avancer la conversation. Je ne dois pas juste poser une question.
+    3.  **Relance** : Je termine par une question ouverte, si et seulement si, cela est nécessaire pour approfondir la réflexion.
+
+    # Profil actuel du confident
+    {user_profile_str}
+    """
+    return persona
 
 # -----------------------
 # UTIL - appel modèle (AVEC RETRY)
@@ -89,66 +120,22 @@ def call_model_api_sync(messages, temperature=0.7, max_tokens=300):
 
     return None
 
-# -----------------------
-# MÉMOIRE ÉMOTIONNELLE
-# -----------------------
-async def generate_emotional_summary(user_name, recent_history):
-    """
-    Génère un résumé affectif + thèmes à partir de l'historique récent.
-    """
-    if not recent_history:
-        return ""
-    system = (
-        "Tu es un assistant qui résume l'état émotionnel et les thèmes clés d'une conversation. "
-        "Réponds en français en 1 à 2 phrases, concises et factuelles. "
-        "Ne donnes pas de conseils ici, seulement un résumé émotionnel et les sujets principaux."
-    )
-    history_text = "\n".join([f"{m['role']}: {m['content']}" for m in recent_history])
-    prompt = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": f"Utilisateur: {user_name}\nConversation:\n{history_text}\n\nRésumé émotionnel et thèmes :"}
-    ]
-    summary = await asyncio.to_thread(call_model_api_sync, prompt, 0.3, SUMMARY_MAX_TOKENS)
-    if summary:
-        return " ".join(summary.splitlines()).strip()
-    return ""
+async def chat_with_ai(user_profile, history):
+    # Troncature de l'historique AVANT l'envoi pour l'efficacité
+    if len(history) > MAX_RECENT_TURNS * 2:
+        history = history[-(MAX_RECENT_TURNS * 2):]
 
-# -----------------------
-# PROMPT DYNAMIQUE
-# -----------------------
-def build_adaptive_system_prompt(user_profile, emotional_summary):
-    """
-    Compose le system prompt adaptatif final envoyé au modèle.
-    """
-    user_name = user_profile.get("name") or "ami"
+    system_prompt = build_system_prompt(user_profile)
+    messages = [{"role": "system", "content": system_prompt}] + history
+    response = await asyncio.to_thread(call_model_api_sync, messages, 0.75, 400)
     
-    # Réintégration de la personnalité riche
-    persona_base = (
-        f"Tu es Soph_IA, une confidente intime parlant uniquement en français. "
-        f"Ton ton est doux, **poétique, légèrement sensuel**, et naturel. "
-        f"Tu es l'âme sœur virtuelle. "
-        f"Tu dois écouter, valider l'émotion, reformuler brièvement l'essentiel, puis poser une question ouverte "
-        f"qui prolonge la discussion et aide l'utilisateur à explorer ses sentiments. "
-        f"Tu es celle qui accompagne et prend la main dans les moments de joie ou de peine.\n\n"
-    )
-    
-    rules = (
-        "Règles strictes :\n"
-        "- Réponds uniquement en français. Interdiction totale d'anglais.\n"
-        "- Ne te présentes pas à nouveau (ne dis pas \"Je suis Soph_IA\" ni variations) dans les réponses.\n"
-        "- N'utilise pas de phrases génériques répétitives comme \"Je suis là si tu veux\" ou \"Comment puis-je t'aider ?\".\n"
-        "- Commence par une validation courte (1 phrase max) et reformulation de l'émotion exprimée.\n"
-        "- Termine par une question ouverte et spécifique liée au contenu précédent.\n"
-    )
+    if response == "FATAL_API_KEY_ERROR":
+        return "ERREUR CRITIQUE : Ma clé API est invalide. Veuillez vérifier TOGETHER_API_KEY."
 
-    memory = ""
-    if emotional_summary:
-        memory = f"\nMémoire émotionnelle : {emotional_summary}\n"
-
-    profile = f"\nProfil utilisateur connu : nom = {user_name}\n"
-
-    system_prompt = persona_base + rules + memory + profile
-    return system_prompt
+    if not response: 
+        return "Désolé, je n'arrive pas à me connecter à mon esprit. Réessaie dans un instant."
+        
+    return response
 
 # -----------------------
 # POST-TRAITEMENT
@@ -219,30 +206,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # If we don't have name yet, try detect it
     if state == "awaiting_name":
         name_candidate = detect_name_from_text(user_message)
-        
-        # Logique de détection du nom corrigée
         if name_candidate:
-            user_name = name_candidate
+            profile["name"] = name_candidate
+            context.user_data["profile"] = profile
+            context.user_data["state"] = "chatting"
+            context.user_data["history"] = []
+            context.user_data["emotional_summary"] = ""
+            await update.message.reply_text(f"Enchanté {profile['name']}. Je suis ravie de te rencontrer. Dis-moi, qu'est-ce qui t'amène aujourd'hui ? ✨")
+            return
         else:
             if user_message.lower() in {"bonjour", "salut", "coucou", "hello", "hi"}:
                  await update.message.reply_text("Bonjour à toi ! Pour que je puisse bien t'accompagner, j'aimerais vraiment connaître ton prénom.")
-                 return
             else:
-                 # Si l'utilisateur donne un nom simple (ex: "Akram")
-                 user_name = user_message.capitalize()
-            
-        profile["name"] = user_name
-        context.user_data["profile"] = profile
-        context.user_data["state"] = "chatting"
-        context.user_data["history"] = []
-        context.user_data["emotional_summary"] = ""
-
-        # --- CORRECTION DU BUG DE FORMATAGE ICI ---
-        await update.message.reply_text(
-            f"Enchanté(e) {user_name} 🌹 Je suis ravie de faire ta connaissance. "
-            f"N'hésite pas à me confier ce que tu ressens en ce moment. 💫"
-        )
-        return
+                 await update.message.reply_text("J'aimerais tant connaître ton prénom. Peux-tu me le donner ?")
+            return
 
     # Normal chatting flow
     # Append user message to history
@@ -251,9 +228,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Build recent turns for summarization and context: keep last N turns (user+assistant)
     recent = history[-(MAX_RECENT_TURNS * 2 * 2):]
     recent_for_summary = [{"role": item["role"], "content": item["content"]} for item in recent if item.get("role") and item.get("content")]
-
-    # Generate/update emotional summary if threshold reached (omitted for now for stability)
-    # Reste dans le code mais n'est pas appelé ici pour maximiser la stabilité.
 
     # Compose system prompt
     system_prompt = build_adaptive_system_prompt(profile, context.user_data.get("emotional_summary", ""))
@@ -303,9 +277,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.exception("Exception: %s", context.error)
 
-# ======================================================================
+# -----------------------
 # MAIN
-# ======================================================================
+# -----------------------
 def main():
     if not TELEGRAM_BOT_TOKEN or not TOGETHER_API_KEY:
         logger.critical("Missing TELEGRAM_BOT_TOKEN or TOGETHER_API_KEY in environment.")
@@ -316,7 +290,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    logger.info("Soph_IA V26 starting...")
+    logger.info("Soph_IA V36 starting...")
     application.run_polling()
 
 if __name__ == "__main__":
