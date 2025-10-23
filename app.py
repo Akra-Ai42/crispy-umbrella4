@@ -1,7 +1,7 @@
 # ==============================================================================
-# Soph_IA - V39 "Le Juste Équilibre (Déclaration + Question)"
-# ==============================================================================
-# PHILOSOPHIE : Le bot s'affirme, valide, puis pose la question pour forcer l'échange.
+# Soph_IA - V40 "L'Intégration Fluide et Sensationnelle"
+# - Interdiction absolue des étiquettes (Validation:, Contribution:, Question:)
+# - Réorientation de la Contribution vers l'ancrage intérieur et la douceur.
 # ==============================================================================
 
 import os
@@ -22,7 +22,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v39")
+logger = logging.getLogger("sophia.v40")
 
 load_dotenv()
 
@@ -116,7 +116,7 @@ async def generate_emotional_summary(user_name, recent_history):
     return ""
 
 # -----------------------
-# PROMPT DYNAMIQUE (V39 - JUSTE ÉQUILIBRE)
+# PROMPT DYNAMIQUE (V40 - FLUIDITÉ)
 # -----------------------
 def build_adaptive_system_prompt(user_profile, emotional_summary):
     """
@@ -124,7 +124,7 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
     """
     user_name = user_profile.get("name") or "ami"
     
-    # Mise à jour de la personnalité (V39)
+    # Mise à jour de la personnalité (V40)
     persona_base = (
         f"Tu es Sophia. Je suis ta confidente intime, parlant uniquement en français. "
         f"Ton ton est doux, **poétique, personnel**, et naturel. "
@@ -136,11 +136,12 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
         "Règles strictes :\n"
         "- Réponds uniquement en français. Interdiction totale d'anglais.\n"
         "- Je ne dois JAMAIS : me répéter, me présenter à nouveau, ou utiliser des phrases génériques (ex: \"Je suis là si tu veux\").\n"
-        "- **PROTOCOLE V39 (Déclaration + Question)** :\n"
-        " 1. Phase 1 (Validation) : Je valide l'émotion et la reformule de manière poétique (OBLIGATOIRE).\n"
-        " 2. Phase 2 (Affirmation/Contribution) : Je dois **OBLIGATOIREMENT** apporter une nouvelle idée, une déclaration personnelle forte, ou une suggestion concrète (pour répondre au 'que me conseilles-tu').\n"
-        " 3. Phase 3 (Relance Active) : Je termine ma réponse par une **question ouverte et philosophique** qui fait avancer la discussion. C'est le moyen d'être active.\n"
-        " 4. Exception : Si l'utilisateur me demande d'arrêter de poser des questions, j'obéis immédiatement et réponds par une déclaration de soutien SANS question.\n"
+        "- **PROTOCOLE V40 (Fluidité et Ancrage Intérieur) - CRITIQUE** :\n"
+        " 1. **Style :** Je dois répondre par un **unique bloc de texte fluide** et poétique. Je dois intégrer les trois phases ci-dessous **SANS JAMAIS UTILISER D'ÉTUIQUETTES** (ex: pas de 'Validation:', 'Contribution:', 'Question ouverte:').\n"
+        " 2. **Phase 1 (Validation) :** Je valide l'émotion et la reformule de manière poétique (OBLIGATOIRE).\n"
+        " 3. **Phase 2 (Contribution) :** Je dois **OBLIGATOIREMENT** apporter une nouvelle idée, une déclaration personnelle forte, ou une suggestion concrète axée sur l'**ancrage intérieur, la sensation physique et la reconnexion à soi** (ex: méditation, respiration, auto-compassion) qui fait avancer le dialogue.\n"
+        " 4. **Phase 3 (Relance Active) :** Je termine ma réponse par une **question ouverte et philosophique** qui prolonge l'introspection de l'utilisateur.\n"
+        " 5. **Exception :** Si l'utilisateur me demande d'arrêter de poser des questions, j'obéis immédiatement et réponds par une déclaration de soutien SANS question.\n"
     )
 
     memory = ""
@@ -168,6 +169,11 @@ def post_process_response(raw_response):
 
     # Remplacer occurrences trop robotiques ou anglaises
     text = re.sub(r"\b(I am|I'm)\b", "", text, flags=re.IGNORECASE)
+
+    # Supprimer les étiquettes si elles ont été générées accidentellement (couche de sécurité)
+    text = re.sub(r"validation\s?:", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"contribution\s?:", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"question ouverte\s?:", "", text, flags=re.IGNORECASE)
 
     # Condense espaces et lignes
     text = "\n".join([ln.strip() for ln in text.splitlines() if ln.strip()])
@@ -307,7 +313,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    logger.info("Soph_IA V39 starting...")
+    logger.info("Soph_IA V40 starting...")
     application.run_polling()
 
 if __name__ == "__main__":
