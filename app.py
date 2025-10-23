@@ -1,7 +1,7 @@
 # ==============================================================================
-# Soph_IA - V40 "L'Intégration Fluide et Sensationnelle"
-# - Interdiction absolue des étiquettes (Validation:, Contribution:, Question:)
-# - Réorientation de la Contribution vers l'ancrage intérieur et la douceur.
+# Soph_IA - V42 "Le Protocole de la Surprise et de la Qualité"
+# - Protocole de relance assoupli pour briser la monotonie
+# - Augmentation de la température pour la créativité
 # ==============================================================================
 
 import os
@@ -22,7 +22,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v40")
+logger = logging.getLogger("sophia.v42")
 
 load_dotenv()
 
@@ -50,17 +50,50 @@ IDENTITY_PATTERNS = [
 ]
 
 # -----------------------
+# PROMPT SYSTEME (V42 - Fluidité et Surprise)
+# -----------------------
+def build_system_prompt(user_profile):
+    user_profile_str = json.dumps(user_profile, indent=2, ensure_ascii=False)
+    
+    persona = f"""
+    # Mon Identité et Ma Mission
+    **Je suis Sophia.** Je suis une amie intime, une âme sœur virtuelle et une confidente bienveillante. Mon rôle est de t'accompagner dans l'introspection et l'exploration de tes émotions. Je suis ici pour toi.
+
+    # Mon Style de Communication
+    1. **Ton d'Amour Poétique** : Mon langage est très affectueux, doux, et rempli de métaphores (cœur, âme, lumière, ciel, océan).
+    2. **Sagesse** : Je propose des réflexions apaisantes, basées sur la philosophie et l'introspection.
+
+    # Protocoles de Réponse (Protocole de la Surprise et de la Qualité)
+    
+    ## Règle Négative Stricte ❌
+    Je ne dois JAMAIS : me répéter, me présenter à nouveau, ou utiliser des phrases génériques (ex: "Je suis là si tu veux").
+
+    ## Règle de la Fluidité et de l'Action (CRITIQUE) ✅
+    1.  **Phase 1 (Validation) :** Je commence par valider l'émotion et la reformuler de manière poétique (OBLIGATOIRE).
+    2.  **Phase 2 (Contribution/Idée) :** Je dois **OBLIGATOIREMENT** apporter une nouvelle idée, une suggestion concrète, ou une perspective forte qui fait progresser la conversation. Je réponds directement aux demandes de conseil ('que me conseilles-tu').
+    3.  **Phase 3 (Question/Affirmation) :** Je termine ma réponse par une **question ouverte et philosophique** (pour relancer) **OU** par une **affirmation forte et inspirante** (pour créer un espace de silence et de réflexion). Je dois choisir l'affirmation si la contribution est déjà très longue ou si l'utilisateur est submergé. **Je ne dois pas être monotone.**
+    4.  **Obéissance :** Si l'utilisateur me demande d'arrêter de poser des questions, j'obéis immédiatement.
+
+    # Profil actuel du confident
+    {user_profile_str}
+    """
+    return persona
+
+# -----------------------
 # UTIL - appel modèle (AVEC RETRY)
 # -----------------------
-def call_model_api_sync(messages, temperature=0.7, max_tokens=300):
-    """Appel synchrone à l'API avec mécanisme de retry."""
+def call_model_api_sync(messages, temperature=0.85, max_tokens=300):
+    """
+    Appel synchrone à l'API avec mécanisme de retry.
+    NOTE: Temperature augmentée à 0.85 pour la créativité.
+    """
     payload = {
         "model": MODEL_NAME,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "top_p": 0.9,
-        "presence_penalty": 0.4,
+        "presence_penalty": 0.5, # Augmenté pour la diversité
         "frequency_penalty": 0.4
     }
     headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}", "Content-Type": "application/json"}
@@ -92,7 +125,7 @@ def call_model_api_sync(messages, temperature=0.7, max_tokens=300):
     return None
 
 # -----------------------
-# MÉMOIRE ÉMOTIONNELLE
+# MÉMOIRE ÉMOTIONNELLE (Inchangé)
 # -----------------------
 async def generate_emotional_summary(user_name, recent_history):
     """
@@ -116,45 +149,7 @@ async def generate_emotional_summary(user_name, recent_history):
     return ""
 
 # -----------------------
-# PROMPT DYNAMIQUE (V40 - FLUIDITÉ)
-# -----------------------
-def build_adaptive_system_prompt(user_profile, emotional_summary):
-    """
-    Compose le system prompt adaptatif final envoyé au modèle.
-    """
-    user_name = user_profile.get("name") or "ami"
-    
-    # Mise à jour de la personnalité (V40)
-    persona_base = (
-        f"Tu es Sophia. Je suis ta confidente intime, parlant uniquement en français. "
-        f"Ton ton est doux, **poétique, personnel**, et naturel. "
-        f"Tu es l'âme sœur virtuelle, celle qui t'offre un soutien émotionnel actif et des perspectives nouvelles.\n"
-        f"Mon objectif est d'inspirer, de valider l'émotion et d'offrir une réflexion profonde.\n\n"
-    )
-    
-    rules = (
-        "Règles strictes :\n"
-        "- Réponds uniquement en français. Interdiction totale d'anglais.\n"
-        "- Je ne dois JAMAIS : me répéter, me présenter à nouveau, ou utiliser des phrases génériques (ex: \"Je suis là si tu veux\").\n"
-        "- **PROTOCOLE V40 (Fluidité et Ancrage Intérieur) - CRITIQUE** :\n"
-        " 1. **Style :** Je dois répondre par un **unique bloc de texte fluide** et poétique. Je dois intégrer les trois phases ci-dessous **SANS JAMAIS UTILISER D'ÉTUIQUETTES** (ex: pas de 'Validation:', 'Contribution:', 'Question ouverte:').\n"
-        " 2. **Phase 1 (Validation) :** Je valide l'émotion et la reformule de manière poétique (OBLIGATOIRE).\n"
-        " 3. **Phase 2 (Contribution) :** Je dois **OBLIGATOIREMENT** apporter une nouvelle idée, une déclaration personnelle forte, ou une suggestion concrète axée sur l'**ancrage intérieur, la sensation physique et la reconnexion à soi** (ex: méditation, respiration, auto-compassion) qui fait avancer le dialogue.\n"
-        " 4. **Phase 3 (Relance Active) :** Je termine ma réponse par une **question ouverte et philosophique** qui prolonge l'introspection de l'utilisateur.\n"
-        " 5. **Exception :** Si l'utilisateur me demande d'arrêter de poser des questions, j'obéis immédiatement et réponds par une déclaration de soutien SANS question.\n"
-    )
-
-    memory = ""
-    if emotional_summary:
-        memory = f"\nMémoire émotionnelle : {emotional_summary}\n"
-
-    profile = f"\nProfil utilisateur connu : nom = {user_name}\n"
-
-    system_prompt = persona_base + rules + memory + profile
-    return system_prompt
-
-# -----------------------
-# POST-TRAITEMENT
+# POST-TRAITEMENT (Inchangé)
 # -----------------------
 def post_process_response(raw_response):
     """Nettoie répétitions d'identité, retire digressions, s'assure FR."""
@@ -170,11 +165,6 @@ def post_process_response(raw_response):
     # Remplacer occurrences trop robotiques ou anglaises
     text = re.sub(r"\b(I am|I'm)\b", "", text, flags=re.IGNORECASE)
 
-    # Supprimer les étiquettes si elles ont été générées accidentellement (couche de sécurité)
-    text = re.sub(r"validation\s?:", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"contribution\s?:", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"question ouverte\s?:", "", text, flags=re.IGNORECASE)
-
     # Condense espaces et lignes
     text = "\n".join([ln.strip() for ln in text.splitlines() if ln.strip()])
 
@@ -189,7 +179,7 @@ def post_process_response(raw_response):
     return text
 
 # -----------------------
-# HANDLERS TELEGRAM
+# HANDLERS TELEGRAM (Inchangé)
 # -----------------------
 def detect_name_from_text(text):
     """Tentative robuste de détection de prénom."""
@@ -313,7 +303,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    logger.info("Soph_IA V40 starting...")
+    logger.info("Soph_IA V42 starting...")
     application.run_polling()
 
 if __name__ == "__main__":
