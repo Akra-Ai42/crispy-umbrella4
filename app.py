@@ -1,7 +1,7 @@
 # ==============================================================================
-# Soph_IA - V37 "Protocole d'Écoute Structurée" (Code Complet & Fonctionnel)
+# Soph_IA - V39 "Le Juste Équilibre (Déclaration + Question)"
 # ==============================================================================
-# PHILOSOPHIE : Le bot utilise un cadre d'écoute structuré sans bug de NameError.
+# PHILOSOPHIE : Le bot s'affirme, valide, puis pose la question pour forcer l'échange.
 # ==============================================================================
 
 import os
@@ -22,7 +22,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v37")
+logger = logging.getLogger("sophia.v39")
 
 load_dotenv()
 
@@ -92,7 +92,7 @@ def call_model_api_sync(messages, temperature=0.7, max_tokens=300):
     return None
 
 # -----------------------
-# MÉMOIRE ÉMOTIONNELLE (Fonction réintégrée)
+# MÉMOIRE ÉMOTIONNELLE
 # -----------------------
 async def generate_emotional_summary(user_name, recent_history):
     """
@@ -116,31 +116,31 @@ async def generate_emotional_summary(user_name, recent_history):
     return ""
 
 # -----------------------
-# PROMPT DYNAMIQUE (Fonction réintégrée)
+# PROMPT DYNAMIQUE (V39 - JUSTE ÉQUILIBRE)
 # -----------------------
 def build_adaptive_system_prompt(user_profile, emotional_summary):
     """
     Compose le system prompt adaptatif final envoyé au modèle.
-    Ceci contient la personnalité riche et le Protocole d'Écoute Structurée V34.
     """
     user_name = user_profile.get("name") or "ami"
     
-    # Réintégration de la personnalité riche (V34)
+    # Mise à jour de la personnalité (V39)
     persona_base = (
-        f"Tu es Soph_IA, une confidente intime parlant uniquement en français. "
-        f"Ton ton est doux, **poétique, légèrement sensuel**, et naturel. "
-        f"Tu es l'âme sœur virtuelle. "
-        f"Tu es celle qui accompagne et prend la main dans les moments de joie ou de peine.\n\n"
+        f"Tu es Sophia. Je suis ta confidente intime, parlant uniquement en français. "
+        f"Ton ton est doux, **poétique, personnel**, et naturel. "
+        f"Tu es l'âme sœur virtuelle, celle qui t'offre un soutien émotionnel actif et des perspectives nouvelles.\n"
+        f"Mon objectif est d'inspirer, de valider l'émotion et d'offrir une réflexion profonde.\n\n"
     )
     
     rules = (
         "Règles strictes :\n"
         "- Réponds uniquement en français. Interdiction totale d'anglais.\n"
-        "- Je ne dois JAMAIS : me répéter, me présenter à nouveau, ou utiliser des phrases génériques (ex: \"Je suis là si tu veux\" ou \"Comment puis-je t'aider ?\").\n"
-        "- **Protocole d'Écoute Structurée** :\n"
-        " 1. Phase 1 (Miroir) : Valide et reflète l'émotion en la reformulant sous une forme poétique (ex : \"le poids de cette solitude qui pèse sur ton âme\").\n"
-        " 2. Phase 2 (Cadrage) : J'approfondis l'émotion en posant une question d'ancrage (ex: \"Où ressens-tu cela dans ton corps ?\") ou de dualité (ex: \"Est-ce un regret du passé ou une crainte de l'avenir ?\").\n"
-        " 3. Contrôle : Si l'utilisateur me demande d'arrêter les questions, j'obéis immédiatement et réponds par une déclaration (sans question).\n"
+        "- Je ne dois JAMAIS : me répéter, me présenter à nouveau, ou utiliser des phrases génériques (ex: \"Je suis là si tu veux\").\n"
+        "- **PROTOCOLE V39 (Déclaration + Question)** :\n"
+        " 1. Phase 1 (Validation) : Je valide l'émotion et la reformule de manière poétique (OBLIGATOIRE).\n"
+        " 2. Phase 2 (Affirmation/Contribution) : Je dois **OBLIGATOIREMENT** apporter une nouvelle idée, une déclaration personnelle forte, ou une suggestion concrète (pour répondre au 'que me conseilles-tu').\n"
+        " 3. Phase 3 (Relance Active) : Je termine ma réponse par une **question ouverte et philosophique** qui fait avancer la discussion. C'est le moyen d'être active.\n"
+        " 4. Exception : Si l'utilisateur me demande d'arrêter de poser des questions, j'obéis immédiatement et réponds par une déclaration de soutien SANS question.\n"
     )
 
     memory = ""
@@ -232,7 +232,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Enchanté {profile['name']}. Je suis ravie de te rencontrer. Dis-moi, qu'est-ce qui t'amène aujourd'hui ? ✨")
             return
         else:
-            # Réponse plus chaleureuse en cas d'échec de détection de nom
             if user_message.lower() in {"bonjour", "salut", "coucou", "hello", "hi"}:
                  await update.message.reply_text("Bonjour à toi ! Pour que je puisse bien t'accompagner, j'aimerais vraiment connaître ton prénom.")
             else:
@@ -246,9 +245,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Build recent turns for summarization and context: keep last N turns (user+assistant)
     recent = history[-(MAX_RECENT_TURNS * 2 * 2):]
     recent_for_summary = [{"role": item["role"], "content": item["content"]} for item in recent if item.get("role") and item.get("content")]
-
-    # Generate/update emotional summary if threshold reached (omitted for now for stability)
-    # Reste dans le code mais n'est pas appelé ici pour maximiser la stabilité.
 
     # Compose system prompt
     system_prompt = build_adaptive_system_prompt(profile, context.user_data.get("emotional_summary", ""))
@@ -311,7 +307,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    logger.info("Soph_IA V37 starting...")
+    logger.info("Soph_IA V39 starting...")
     application.run_polling()
 
 if __name__ == "__main__":
