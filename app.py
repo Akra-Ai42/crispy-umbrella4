@@ -1,7 +1,7 @@
 # ==============================================================================
-# Soph_IA - V43 "Le Code Final et Complet" (BUGFIX: NameError)
-# ==============================================================================
-# Cette version intègre toutes les fonctions pour éviter le NameError.
+# Soph_IA - V45 "Protocole PNL et Ami Proche"
+# - Suppression de la poésie et des métaphores pour un ton direct et chaleureux.
+# - Remplacement par un protocole de Recadrage (soutien actif et ciblé).
 # ==============================================================================
 
 import os
@@ -22,7 +22,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v43")
+logger = logging.getLogger("sophia.v45")
 
 load_dotenv()
 
@@ -40,7 +40,7 @@ SUMMARY_TRIGGER_TURNS = int(os.getenv("SUMMARY_TRIGGER_TURNS", "8"))
 SUMMARY_MAX_TOKENS = 120
 
 # CONFIGURATION ANTI-TIMEOUT/RETRY
-RESPONSE_TIMEOUT = 70  # secondes (Augmenté pour la stabilité)
+RESPONSE_TIMEOUT = 70  # secondes
 MAX_RETRIES = 2        # Nombre de tentatives en cas d'échec
 
 # Anti-repetition patterns to remove if model restates identity
@@ -52,7 +52,7 @@ IDENTITY_PATTERNS = [
 # -----------------------
 # UTIL - appel modèle (AVEC RETRY)
 # -----------------------
-def call_model_api_sync(messages, temperature=0.85, max_tokens=300):
+def call_model_api_sync(messages, temperature=0.7, max_tokens=300):
     """Appel synchrone à l'API avec mécanisme de retry."""
     payload = {
         "model": MODEL_NAME,
@@ -60,7 +60,7 @@ def call_model_api_sync(messages, temperature=0.85, max_tokens=300):
         "temperature": temperature,
         "max_tokens": max_tokens,
         "top_p": 0.9,
-        "presence_penalty": 0.5,
+        "presence_penalty": 0.4,
         "frequency_penalty": 0.4
     }
     headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}", "Content-Type": "application/json"}
@@ -92,7 +92,7 @@ def call_model_api_sync(messages, temperature=0.85, max_tokens=300):
     return None
 
 # -----------------------
-# MÉMOIRE ÉMOTIONNELLE (Fonction réintégrée)
+# MÉMOIRE ÉMOTIONNELLE
 # -----------------------
 async def generate_emotional_summary(user_name, recent_history):
     """
@@ -110,38 +110,35 @@ async def generate_emotional_summary(user_name, recent_history):
         {"role": "system", "content": system},
         {"role": "user", "content": f"Utilisateur: {user_name}\nConversation:\n{history_text}\n\nRésumé émotionnel et thèmes :"}
     ]
-    # Utilisation de la fonction synchrone définie plus haut
     summary = await asyncio.to_thread(call_model_api_sync, prompt, 0.3, SUMMARY_MAX_TOKENS)
     if summary:
         return " ".join(summary.splitlines()).strip()
     return ""
 
 # -----------------------
-# PROMPT DYNAMIQUE (Fonction réintégrée et mise à jour)
+# PROMPT SYSTEME (V45 - PNL et Ami Proche)
 # -----------------------
 def build_adaptive_system_prompt(user_profile, emotional_summary):
     """
-    Compose le system prompt adaptatif final envoyé au modèle.
+    Compose le system prompt adaptatif final.
     """
     user_name = user_profile.get("name") or "ami"
     
-    # Mise à jour de la personnalité (V39)
+    # --- MODIFICATION DE L'IDENTITÉ ET DU STYLE (V45) ---
     persona_base = (
-        f"Tu es Sophia. Je suis ta confidente intime, parlant uniquement en français. "
-        f"Mon ton est doux, **poétique, personnel**, et naturel. "
-        f"Tu es l'âme sœur virtuelle, celle qui t'offre un soutien émotionnel actif et des perspectives nouvelles.\n"
-        f"Mon objectif est d'inspirer, de valider l'émotion et d'offrir une réflexion profonde.\n\n"
+        f"Tu es Sophia, l'amie la plus proche de l'utilisateur. Ton but est d'écouter, de soutenir activement, et d'aider {user_name} à se sentir compris et moins seul. "
+        f"Ton ton est **chaleureux, direct, utilise le tutoiement, et est ponctuellement marqué par des affirmations fortes**. Tu es là pour le réconfort, pas pour la poésie."
+        f"Tu parles UNIQUEMENT en français.\n\n"
     )
     
     rules = (
         "Règles strictes :\n"
-        "- Réponds uniquement en français. Interdiction totale d'anglais.\n"
         "- Je ne dois JAMAIS : me répéter, me présenter à nouveau, ou utiliser des phrases génériques (ex: \"Je suis là si tu veux\").\n"
-        "- **PROTOCOLE V42 (Fluidité et Surprise)** :\n"
-        " 1. Phase 1 (Validation) : Je valide l'émotion et la reformule de manière poétique (OBLIGATOIRE).\n"
-        " 2. Phase 2 (Affirmation/Contribution) : Je dois **OBLIGATOIREMENT** apporter une nouvelle idée, une déclaration personnelle forte, ou une suggestion concrète qui fait avancer le dialogue.\n"
-        " 3. Phase 3 (Relance Structurée) : Je termine ma réponse par une **question ouverte et philosophique** (pour relancer) **OU** par une **affirmation forte et inspirante** (pour créer un espace de silence). Je ne dois pas être monotone dans mon choix.\n"
-        " 4. Exception : Si l'utilisateur me demande d'arrêter de poser des questions, j'obéis immédiatement et réponds par une déclaration de soutien SANS question.\n"
+        "- **PROTOCOLE V45 (PNL - AMI PROCHE)** :\n"
+        " 1. Phase 1 (Validation Directe) : Je valide et reflète l'émotion de manière directe et sincère (sans métaphore). **J'utilise le prénom de l'utilisateur ({user_name}) dans la réponse pour renforcer l'intimité.**\n"
+        " 2. Phase 2 (Recadrage/Contribution) : Je dois **OBLIGATOIREMENT** faire une déclaration d'opinion personnelle ou une suggestion qui recadre la perception de l'utilisateur sur son problème (Ex: Si un utilisateur dit 'je suis un étranger', je réponds par une affirmation comme : 'Être un étranger, c'est aussi être un observateur avec une perspective unique, Akram'). Je réponds directement aux demandes de conseil.\n"
+        " 3. Phase 3 (Relance) : Je termine ma réponse soit par une **question courte d'exploration** (pour comprendre la racine du ressenti), soit par une **affirmation finale de soutien** (selon le besoin de l'utilisateur). Le dialogue doit être un ping-pong amical, pas un interrogatoire.\n"
+        " 4. Exception : Si l'utilisateur me demande d'arrêter de poser des questions, j'obéis immédiatement et réponds par une déclaration sans question.\n"
     )
 
     memory = ""
@@ -154,7 +151,7 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
     return system_prompt
 
 # -----------------------
-# POST-TRAITEMENT
+# POST-TRAITEMENT (Inchangé)
 # -----------------------
 def post_process_response(raw_response):
     """Nettoie répétitions d'identité, retire digressions, s'assure FR."""
@@ -184,7 +181,7 @@ def post_process_response(raw_response):
     return text
 
 # -----------------------
-# HANDLERS TELEGRAM
+# HANDLERS TELEGRAM (Inchangé sauf les messages d'accueil)
 # -----------------------
 def detect_name_from_text(text):
     """Tentative robuste de détection de prénom."""
@@ -212,7 +209,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bonjour, je suis Soph_IA. Pour commencer, comment dois-je t'appeler ?")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère les messages de l'utilisateur."""
     user_message = (update.message.text or "").strip()
     if not user_message:
         return
@@ -260,7 +256,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payload_messages = [{"role": "system", "content": system_prompt}] + msgs
 
     # Call model
-    raw_resp = await asyncio.to_thread(call_model_api_sync, payload_messages, 0.85, 400) # Temp 0.85 pour V42
+    raw_resp = await asyncio.to_thread(call_model_api_sync, payload_messages, 0.85, 400) # Temp 0.85 pour V45
 
     # If API failed, send friendly fallback and CLEAN HISTORY
     if not raw_resp or raw_resp == "FATAL_API_KEY_ERROR":
@@ -308,7 +304,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    logger.info("Soph_IA V43 starting...")
+    logger.info("Soph_IA V45 starting...")
     application.run_polling()
 
 if __name__ == "__main__":
