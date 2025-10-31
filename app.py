@@ -1,5 +1,5 @@
 # ==============================================================================
-# Soph_IA - V60 "Le Code Final et Fonctionnel" (BUG FIX: NameError CRITIQUE)
+# Soph_IA - V61 "Le Code Final et Fonctionnel" (BUG FIX: IndentationError)
 # ==============================================================================
 
 import os
@@ -21,7 +21,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v60")
+logger = logging.getLogger("sophia.v61")
 
 load_dotenv()
 
@@ -53,7 +53,7 @@ DIAGNOSTIC_QUESTIONS = {
 }
 
 # -----------------------
-# UTIL - appel modèle (sync wrapper, utilisé via to_thread)
+# UTIL - appel modèle (AVEC RETRY)
 # -----------------------
 def call_model_api_sync(messages: List[Dict], temperature: float = 0.85, max_tokens: int = 400):
     """Appel synchrone à l'API avec mécanisme de retry."""
@@ -246,7 +246,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Traitement immédiat du message de l'utilisateur avec le Protocole PEC
             history.append({"role": "user", "content": user_message, "ts": datetime.utcnow().isoformat()})
-            response = await chat_with_ai(profile, history, context) # CORRECTION : Ajout de context
+            response = await chat_with_ai(profile, history, context)
             
             if "ERREUR CRITIQUE" in response or "Désolé, je n'arrive pas à me connecter" in response:
                  await update.message.reply_text(response)
@@ -274,7 +274,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["state"] = "awaiting_context_q2_geo" # Nouvelle Q2
         # IA génère la transition (Validation + Question 2)
         transition_prompt = f"L'utilisateur {profile['name']} vient de répondre à la question 1 sur son socle familial : '{user_message}'. Rédige une transition douce et chaleureuse de 1 à 2 phrases maximum, puis enchaîne immédiatement avec la question 2 sans rupture. Question 2 : {DIAGNOSTIC_QUESTIONS['q2_geo']}"
-        response = await chat_with_ai(profile, [{"role": "user", "content": transition_prompt}], context) # CORRECTION : Ajout de context
+        response = await chat_with_ai(profile, [{"role": "user", "content": transition_prompt}], context) # Correction: Ajout de context
         await update.message.reply_text(response)
         return
     
@@ -284,7 +284,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["state"] = "awaiting_context_q3_pro" # Nouvelle Q3
         # IA génère la transition (Validation + Question 3)
         transition_prompt = f"L'utilisateur {profile['name']} vient de répondre à la question 2 sur son lieu de vie : '{user_message}'. Rédige une transition douce et chaleureuse de 1 à 2 phrases maximum, puis enchaîne immédiatement avec la question 3 sans rupture. Question 3 : {DIAGNOSTIC_QUESTIONS['q3_pro']}"
-        response = await chat_with_ai(profile, [{"role": "user", "content": transition_prompt}], context) # CORRECTION : Ajout de context
+        response = await chat_with_ai(profile, [{"role": "user", "content": transition_prompt}], context) # Correction: Ajout de context
         await update.message.reply_text(response)
         return
 
@@ -294,13 +294,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["state"] = "chatting" # Fin de l'accueil
         # Message de clôture généré par l'IA
         closing_prompt = f"L'utilisateur {profile['name']} a terminé le diagnostic en répondant : '{user_message}'. Rédige un message final de 2-3 phrases qui remercie chaleureusement pour sa confiance, valide la profondeur des partages, et l'invite à se confier sur ce qui le préoccupe, en utilisant son prénom."
-        response = await chat_with_ai(profile, [{"role": "user", "content": closing_prompt}], context) # CORRECTION : Ajout de context
+        response = await chat_with_ai(profile, [{"role": "user", "content": closing_prompt}], context) # Correction: Ajout de context
         await update.message.reply_text(response)
         return
 
 
     # === CONVERSATION NORMALE (PHASE CHATTING) ===
     elif state == 'chatting':
+        # Append user message to history
         history.append({"role": "user", "content": user_message, "ts": datetime.utcnow().isoformat()})
 
         # Compose system prompt
@@ -330,7 +331,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if history and history[-1]["role"] == "user":
                 history.pop() 
             context.user_data["history"] = history
-                return
+            logger.warning("API failed. History purged of the last user message to prevent loop.")
+            return
 
         # Post-process response: remove identity repetition, ensure FR, shorten long outputs
         clean_resp = post_process_response(raw_resp)
