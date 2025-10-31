@@ -337,4 +337,8 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    logger.info("Soph_IA V48
+    logger.info("Soph_IA V48 starting...")
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()
