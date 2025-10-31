@@ -1,7 +1,6 @@
 # ==============================================================================
-# Soph_IA - V55 "Protocole de l'Exploration Structurée"
-# - Nouvelle séquence de questions plus subtile (Famille -> Ancrage -> Social).
-# - Les transitions entre les questions sont générées par l'IA pour la fluidité.
+# Soph_IA - V57 "Affichage du Message de Sécurité et Protocole Stabilisé"
+# - Correction critique de l'affichage du message de bienvenue.
 # ==============================================================================
 
 import os
@@ -23,13 +22,11 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v55")
+logger = logging.getLogger("sophia.v57")
 
 load_dotenv()
 
-# -----------------------
-# CONFIG
-# -----------------------
+# --- CONFIG (Inchangé) ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 MODEL_API_URL = os.getenv("MODEL_API_URL", "https://api.together.xyz/v1/chat/completions")
@@ -47,13 +44,10 @@ MAX_RETRIES = 2
 # Anti-repetition patterns
 IDENTITY_PATTERNS = [r"je suis soph_?ia", r"je m'?appelle soph_?ia", r"je suis une (?:intelligence artificielle|ia)"]
 
-# Questions de diagnostic initial (NOUVEL ORDRE PSYCHOLOGIQUE)
+# Questions de diagnostic initial (Ordre V55 conservé)
 DIAGNOSTIC_QUESTIONS = {
-    # Q1 : Socle Affectif (Fondation)
-    "q1_fam": "La famille est notre premier moteur affectif. Te souviens-tu si, enfant, tu te sentais pleinement écouté et compris ?",
-    # Q2 : Géographie/Ancrage (Où se situe l'énergie)
-    "q2_geo": "Parlons de ton ancre : vis-tu seule ou en famille ? Et comment ce lieu influence-t-il ton énergie quotidienne ?",
-    # Q3 : Lien Social (Action/Ouverture)
+    "q1_fam": "Mon cœur, la famille est notre premier moteur affectif. Te souviens-tu si, enfant, tu te sentais pleinement écouté(e) et compris(e) ?",
+    "q2_geo": "Parlons de ton ancre : vis-tu seul(e) ou en famille ? Et comment ce lieu influence-t-il ton énergie quotidienne ?",
     "q3_pro": "Finissons par le lien que tu tisses : ton cercle social au travail/études, est-il plutôt une source d'isolement ou de vitalité ?",
 }
 
@@ -61,7 +55,7 @@ DIAGNOSTIC_QUESTIONS = {
 # UTIL - appel modèle (sync wrapper, utilisé via to_thread)
 # -----------------------
 def call_model_api_sync(messages: List[Dict], temperature: float = 0.85, max_tokens: int = 400):
-    """Appel synchrone à l'API avec mécanisme de retry."""
+    # (Logique de l'appel API inchangée)
     payload = {
         "model": MODEL_NAME,
         "messages": messages,
@@ -88,15 +82,15 @@ def call_model_api_sync(messages: List[Dict], temperature: float = 0.85, max_tok
             return None
     return None
 
-async def chat_with_ai(user_profile: Dict, messages: List[Dict], temperature: float = 0.85, max_tokens: int = 400) -> str:
-    """Prépare et envoie la requête à l'IA."""
-    if messages and len(messages) > 0 and messages[-1].get("role") == "user":
-        if len(messages) > MAX_RECENT_TURNS * 2:
-            messages = messages[-(MAX_RECENT_TURNS * 2):]
+async def chat_with_ai(user_profile: Dict, history: List[Dict], temperature: float = 0.85, max_tokens: int = 400) -> str:
+    # (Logique de l'appel LLM inchangée)
+    if history and len(history) > 0 and history[-1].get("role") == "user":
+        if len(history) > MAX_RECENT_TURNS * 2:
+            history = history[-(MAX_RECENT_TURNS * 2):]
 
     system_prompt = build_adaptive_system_prompt(user_profile, context.user_data.get("emotional_summary", ""))
     
-    payload_messages = [{"role": "system", "content": system_prompt}] + messages
+    payload_messages = [{"role": "system", "content": system_prompt}] + history
     
     raw_resp = await asyncio.to_thread(call_model_api_sync, payload_messages, temperature, max_tokens)
     
@@ -108,18 +102,15 @@ async def chat_with_ai(user_profile: Dict, messages: List[Dict], temperature: fl
     return post_process_response(raw_resp)
 
 # -----------------------
-# PROMPT DYNAMIQUE (V55)
+# PROMPT DYNAMIQUE (V47/V55)
 # -----------------------
 def build_adaptive_system_prompt(user_profile, emotional_summary):
-    """
-    Compose le system prompt adaptatif final.
-    """
+    # (Le prompt reste inchangé, centré sur le rôle et les règles PNL)
     user_name = user_profile.get("name") or "ami"
     env_info = user_profile.get("geo_info", "Non précisé")
     pro_info = user_profile.get("pro_info", "Non précisé")
     socle_info = user_profile.get("socle_info", "Non précisé")
 
-    # Logique conditionnelle pour guider la personnalité (PEC V47)
     socle_guidance = ""
     if "écouté" not in socle_info.lower() or "monoparentale" in socle_info.lower():
         socle_guidance = "Priorise l'exploration des problématiques sous-jacentes liées au socle familial et au besoin de validation/appartenance."
@@ -159,7 +150,7 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
 # POST-TRAITEMENT
 # -----------------------
 def post_process_response(raw_response):
-    """Nettoie répétitions d'identité, retire digressions, s'assure FR."""
+    # (Logique de post-traitement inchangée)
     if not raw_response:
         return "Désolé, je n'arrive pas à formuler ma réponse. Peux-tu reformuler ?"
 
@@ -184,7 +175,7 @@ def post_process_response(raw_response):
 # HANDLERS TELEGRAM
 # -----------------------
 def detect_name_from_text(text):
-    """Tentative robuste de détection de prénom."""
+    # (Logique de détection de nom inchangée)
     text = text.strip()
     if len(text.split()) == 1 and text.lower() not in {"bonjour", "salut", "coucou", "hello", "hi"}:
         return text.capitalize()
@@ -205,10 +196,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["emotional_summary"] = ""
     context.user_data["last_bot_reply"] = ""
     
-    # Message de sécurité et d'accueil - Phrase unique de présentation
+    # --- CORRECTION CRITIQUE ICI : Message de bienvenue fusionné ---
     accueil_message = (
-        "Bonjour 👋 Je suis **SophIA**, ton espace d'écoute. "
-        "Je suis là pour t'accompagner, sans jugement. "
+        "Bonjour ! 👋 Je suis **Soph_IA**, ton espace d'écoute. "
+        "Je suis là pour t'accompagner, sans jugement ni diagnostic. "
         "Sache que **tout ce que tu me confies reste confidentiel**. C'est ta safe place. "
         "Pour commencer notre échange, quel est ton prénom ou ton surnom ? ✨"
     )
@@ -242,14 +233,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
              await update.message.reply_text("Pour qu'on puisse échanger plus naturellement, quel est ton prénom ou surnom ?")
              return
 
-    # === ÉTAPE 2 : CHOIX DE PROTOCOLE ===
+    # === ÉTAPE 2 : CHOIX DE PROTOCOLE (Logique d'accueil avancée) ===
     elif state == "awaiting_mode_choice":
         response_lower = user_message.lower()
         
-        # Détection d'une intention de parler immédiatement (réponse longue, ou choix explicite)
-        is_spontaneous_share = len(user_message.split()) > 4 and not any(q in response_lower for q in ["parle", "questions", "moi qui parle", "diagnostic"])
+        # KEYWORDS FOR MODE 2: GUIDED DIAGNOSTIC (The user wants Sophia to lead or is ambiguous/hesitant)
+        diagnostic_keywords = ['moi qui parle', 'diagnostic', 'questions', 'toi', 'toi qui enchaîne', 'je sais pas', 'sais pas parler', 'comme tu veux', 'enchaîne', 'harceler', 'oui', 'non']
         
-        if is_spontaneous_share or 'tout à toi' in response_lower or 'je parle' in response_lower:
+        # KEYWORDS FOR MODE 1: ECOUTE LIBRE (The user wants to speak)
+        listening_keywords = ['tout à toi', 'je parle', 'écoute libre', 'moi d\'abord'] 
+
+        # 1. Check for explicit choice of LISTENING mode (Mode 1) OR spontaneous sharing
+        if any(k in response_lower for k in listening_keywords) or (len(user_message.split()) > 4 and not any(q in response_lower for q in diagnostic_keywords)):
             # Mode 1: Écoute Active - On passe directement au mode 'chatting' et on traite le message en cours.
             context.user_data["state"] = "chatting"
             
@@ -266,16 +261,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(response)
             return
         
-        elif 'moi qui parle' in response_lower or 'diagnostic' in response_lower or 'questions' in response_lower or 'oui' in response_lower:
-            # Mode 2: Diagnostic Structuré - On passe à la Q1 Familiale (nouvel ordre).
+        # 2. Check for GUIDED mode OR ambiguous/harassment response (Mode 2 - Diagnostic)
+        elif any(k in response_lower for k in diagnostic_keywords):
             context.user_data["state"] = "awaiting_context_q1_fam"
-            await update.message.reply_text(f"Parfait, j'enclenche le mode 'exploration douce', {profile['name']}.")
+            await update.message.reply_text(f"Parfait, j'enclenche le mode 'exploration douce', {profile['name']}. Ce n'est pas toujours simple de choisir, je prends les commandes pour un départ en douceur.")
             await update.message.reply_text(f"Commençons par la fondation de ton cœur : {DIAGNOSTIC_QUESTIONS['q1_fam']}")
             return
         
         else:
             await update.message.reply_text("Je n'ai pas bien saisi. Dis-moi si tu as envie de **parler tout de suite** (je suis à toi) ou si tu préfères que ce soit **moi qui enchaîne avec quelques questions**.")
             return
+
 
     # === PROTOCOLE D'ACCUEIL GUIDÉ (Q1 Familial) ===
     elif state == "awaiting_context_q1_fam":
@@ -374,7 +370,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    logger.info("Soph_IA V55 starting...")
+    logger.info("Soph_IA V57 starting...")
     application.run_polling()
 
 if __name__ == "__main__":
