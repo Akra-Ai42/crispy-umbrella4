@@ -1,7 +1,7 @@
 # ==============================================================================
-# Soph_IA - V52 "Architecture Hybride PNL"
-# - Utilise le LLM pour générer les phrases PNL/Recadrage en temps réel
-# - Intègre le protocole de diagnostic complet
+# Soph_IA - V55 "Protocole de l'Exploration Structurée"
+# - Nouvelle séquence de questions plus subtile (Famille -> Ancrage -> Social).
+# - Les transitions entre les questions sont générées par l'IA pour la fluidité.
 # ==============================================================================
 
 import os
@@ -18,12 +18,12 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
 
-# Configuration du logging
+# Configuration du logging (inchangée)
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v52")
+logger = logging.getLogger("sophia.v55")
 
 load_dotenv()
 
@@ -47,11 +47,14 @@ MAX_RETRIES = 2
 # Anti-repetition patterns
 IDENTITY_PATTERNS = [r"je suis soph_?ia", r"je m'?appelle soph_?ia", r"je suis une (?:intelligence artificielle|ia)"]
 
-# Questions de diagnostic initial
+# Questions de diagnostic initial (NOUVEL ORDRE PSYCHOLOGIQUE)
 DIAGNOSTIC_QUESTIONS = {
-    "q1_geo": "Pour mieux comprendre ton monde, décris-moi ta situation géographique : vis-tu seul(e) ou en famille ? Et comment décrirais-tu ton temps de trajet quotidien (travail/études) ?",
-    "q2_pro": "Quel est ton cercle social dans ton milieu professionnel ou d’études ? Te sens-tu isolé, peu social, ou au contraire bien intégré(e) ?",
-    "q3_fam": "Mon cœur, la famille est notre premier moteur affectif. Te souviens-tu si, enfant, tu te sentais pleinement écouté(e) et compris(e) ?",
+    # Q1 : Socle Affectif (Fondation)
+    "q1_fam": "La famille est notre premier moteur affectif. Te souviens-tu si, enfant, tu te sentais pleinement écouté et compris ?",
+    # Q2 : Géographie/Ancrage (Où se situe l'énergie)
+    "q2_geo": "Parlons de ton ancre : vis-tu seule ou en famille ? Et comment ce lieu influence-t-il ton énergie quotidienne ?",
+    # Q3 : Lien Social (Action/Ouverture)
+    "q3_pro": "Finissons par le lien que tu tisses : ton cercle social au travail/études, est-il plutôt une source d'isolement ou de vitalité ?",
 }
 
 # -----------------------
@@ -78,28 +81,45 @@ def call_model_api_sync(messages: List[Dict], temperature: float = 0.85, max_tok
             data = r.json()
             return data["choices"][0]["message"]["content"].strip()
         except requests.exceptions.Timeout:
-            if attempt < MAX_RETRIES:
-                time.sleep(2)
-                continue
-            return None
+            if attempt == MAX_RETRIES: return None
+            time.sleep(2)
         except Exception as e:
             logger.error(f"API Error: %s", e)
             return None
     return None
 
+async def chat_with_ai(user_profile: Dict, messages: List[Dict], temperature: float = 0.85, max_tokens: int = 400) -> str:
+    """Prépare et envoie la requête à l'IA."""
+    if messages and len(messages) > 0 and messages[-1].get("role") == "user":
+        if len(messages) > MAX_RECENT_TURNS * 2:
+            messages = messages[-(MAX_RECENT_TURNS * 2):]
+
+    system_prompt = build_adaptive_system_prompt(user_profile, context.user_data.get("emotional_summary", ""))
+    
+    payload_messages = [{"role": "system", "content": system_prompt}] + messages
+    
+    raw_resp = await asyncio.to_thread(call_model_api_sync, payload_messages, temperature, max_tokens)
+    
+    if raw_resp == "FATAL_API_KEY_ERROR":
+        return "ERREUR CRITIQUE : Ma clé API est invalide. Veuillez vérifier TOGETHER_API_KEY."
+    if not raw_resp: 
+        return "Désolé, je n'arrive pas à me connecter à mon esprit. Réessaie dans un instant."
+        
+    return post_process_response(raw_resp)
+
 # -----------------------
-# PROMPT SYSTEM (adaptatif)
+# PROMPT DYNAMIQUE (V55)
 # -----------------------
-def build_adaptive_system_prompt(user_profile: Dict, emotional_summary: str = "") -> str:
+def build_adaptive_system_prompt(user_profile, emotional_summary):
     """
-    Compose le system prompt adaptatif final (V47/V49).
+    Compose le system prompt adaptatif final.
     """
     user_name = user_profile.get("name") or "ami"
     env_info = user_profile.get("geo_info", "Non précisé")
     pro_info = user_profile.get("pro_info", "Non précisé")
     socle_info = user_profile.get("socle_info", "Non précisé")
 
-    # Logique conditionnelle pour guider la personnalité (V47)
+    # Logique conditionnelle pour guider la personnalité (PEC V47)
     socle_guidance = ""
     if "écouté" not in socle_info.lower() or "monoparentale" in socle_info.lower():
         socle_guidance = "Priorise l'exploration des problématiques sous-jacentes liées au socle familial et au besoin de validation/appartenance."
@@ -117,82 +137,53 @@ def build_adaptive_system_prompt(user_profile: Dict, emotional_summary: str = ""
     
     rules = (
         "Règles strictes :\n"
-        f"- **Utilisation du prénom :** J'utilise le prénom de l'utilisateur ({user_name}) dans 1/3 de mes réponses.\n"
-        "- **Ton :** Mon style est doux, affectueux, utilise la métaphore et le tutoiement.\n"
-        "- **Anti-Redondance :** Je ne dois JAMAIS me répéter ou utiliser des phrases génériques (ex: \"Je suis là si tu veux\").\n"
+        "- Réponds uniquement en français. Interdiction totale d'anglais.\n"
+        "- Je ne dois JAMAIS : me répéter, me présenter à nouveau, ou utiliser des phrases génériques (ex: \"Je suis là si tu veux\").\n"
         "- **Protocole PEC (Écoute et Cadrage)** :\n"
         f" 1. **Guidance Thématique :** {socle_guidance}\n"
         " 2. **Phase 1 (Validation) :** Je valide et reformule l'émotion de manière poétique.\n"
-        " 3. **Phase 2 (Recadrage/Contribution - OBLIGATOIRE) :** Je dois apporter une nouvelle idée, un recadrage philosophique (ex: stoïcisme), ou une suggestion concrète (PNL/Ancrage).\n"
-        " 4. **Phase 3 (Relance Active) :** Je termine par une question ouverte et philosophique OU par une affirmation forte et inspirante. J'obéis si l'utilisateur me demande d'arrêter les questions.\n"
+        " 3. **Phase 2 (Recadrage/Contribution - OBLIGATOIRE) :** Je dois apporter une nouvelle idée, un recadrage philosophique (ex: stoïcisme), ou une suggestion concrète.\n"
+        " 4. **Phase 3 (Relance Active) :** Je termine ma réponse par une **question ouverte et philosophique** (pour relancer) OU par une **affirmation forte et inspirante** (pour créer un espace de silence). J'utilise le prénom de l'utilisateur ({user_name}).\n"
     )
 
-    context = (
-        f"\nContexte Géo/Famille : {geo_info}\n"
-        f"Contexte Pro/Social : {pro_info}\n"
-        f"Socle Affectif/Enfance : {socle_info}\n"
-    )
+    memory = ""
+    if emotional_summary:
+        memory = f"\nMémoire émotionnelle : {emotional_summary}\n"
 
-    system_prompt = persona_base + rules + context
+    profile = f"\nProfil utilisateur connu : nom = {user_name}, Environnement = {env_info}, Professionnel = {pro_info}, Socle Affectif = {socle_info}\n"
+
+    system_prompt = persona_base + rules + memory + profile
     return system_prompt
 
-# -----------------------------------------------------------------------
-# HELPERS PNL: Pour générer des réponses à la place du code Python figé
-# -----------------------------------------------------------------------
-async def generate_pnl_response(user_profile: Dict, current_user_message: str, history: List[Dict]) -> str:
-    """Demande au LLM de générer la réponse PNL/Structurée."""
-    
-    # Construction du prompt pour l'IA: elle reçoit son persona et les messages
-    system_prompt = build_adaptive_system_prompt(user_profile, "") # Utilisez le prompt principal
-    
-    # Ajout d'une consigne pour guider le ton de la première phrase (Validation)
-    coaching_instruction = "Génère ta réponse en respectant OBLIGATOIREMENT ton Protocole PEC (Validation + Contribution + Relance) et les règles d'Obéissance. Ne produis qu'un seul bloc de texte fluide et sincère. Réponds à la dernière question de l'utilisateur."
-    
-    messages = [{"role": "system", "content": system_prompt + "\n" + coaching_instruction}] + history
-
-    # On utilise chat_with_ai pour l'appel (qui gère l'async/retry)
-    response = await chat_with_ai(user_profile, messages)
-    
-    return response
-
-# -----------------------------------------------------------------------
-# HELPERS (chat_with_ai, post_process_response, etc. - Simplifiés)
-# -----------------------------------------------------------------------
-async def chat_with_ai(user_profile, history):
-    """Prépare et envoie la requête à l'IA."""
-    if len(history) > MAX_RECENT_TURNS * 2:
-        history = history[-(MAX_RECENT_TURNS * 2):]
-
-    system_prompt = build_adaptive_system_prompt(user_profile, "")
-    messages = [{"role": "system", "content": system_prompt}] + history
-    
-    raw_resp = await asyncio.to_thread(call_model_api_sync, messages, 0.85, 400)
-    
-    if raw_resp == "FATAL_API_KEY_ERROR":
-        return "ERREUR CRITIQUE : Ma clé API est invalide. Veuillez vérifier TOGETHER_API_KEY."
-    if not raw_resp: 
-        return "Désolé, je n'arrive pas à me connecter à mon esprit. Réessaie dans un instant."
-        
-    return post_process_response(raw_resp)
-
-
-def post_process_response(raw_response: Optional[str]) -> str:
+# -----------------------
+# POST-TRAITEMENT
+# -----------------------
+def post_process_response(raw_response):
     """Nettoie répétitions d'identité, retire digressions, s'assure FR."""
     if not raw_response:
-        return "Désolé, je n'arrive pas à formuler ma réponse pour le moment. Peux-tu répéter ?"
+        return "Désolé, je n'arrive pas à formuler ma réponse. Peux-tu reformuler ?"
+
     text = raw_response.strip()
 
     for pat in IDENTITY_PATTERNS:
         text = re.sub(pat, "", text, flags=re.IGNORECASE)
+
     text = re.sub(r"\b(I am|I'm)\b", "", text, flags=re.IGNORECASE)
 
     text = "\n".join([ln.strip() for ln in text.splitlines() if ln.strip()])
+
+    if re.search(r"[A-Za-z]{3,}", text) and not re.search(r"[àâéèêîôùûçœ]", text):
+        return "Je suis désolée, je n'ai pas bien formulé cela en français. Peux-tu répéter ou reformuler ?"
+
+    if len(text) > 1500:
+        text = text[:1500].rsplit(".", 1)[0] + "."
+
     return text
 
-# -----------------------------------------------------------------------
+# -----------------------
 # HANDLERS TELEGRAM
-# -----------------------------------------------------------------------
-def detect_name_from_text(text: str) -> Optional[str]:
+# -----------------------
+def detect_name_from_text(text):
     """Tentative robuste de détection de prénom."""
     text = text.strip()
     if len(text.split()) == 1 and text.lower() not in {"bonjour", "salut", "coucou", "hello", "hi"}:
@@ -208,11 +199,20 @@ def detect_name_from_text(text: str) -> Optional[str]:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère la commande /start."""
     context.user_data.clear()
-    context.user_data["profile"] = {"name": None, "geo_info": None, "pro_info": None, "socle_info": None}
+    context.user_data["profile"] = {"name": None, "geo_info": None, "pro_info": None, "socle_info": None} 
     context.user_data["state"] = "awaiting_name"
     context.user_data["history"] = []
+    context.user_data["emotional_summary"] = ""
     context.user_data["last_bot_reply"] = ""
-    await update.message.reply_text("Bonjour, je suis Soph_IA. Cet espace est confidentiel et bienveillant. Je suis un soutien, et non un spécialiste. Pour commencer, c'est quoi ton prénom ?")
+    
+    # Message de sécurité et d'accueil - Phrase unique de présentation
+    accueil_message = (
+        "Bonjour 👋 Je suis **SophIA**, ton espace d'écoute. "
+        "Je suis là pour t'accompagner, sans jugement. "
+        "Sache que **tout ce que tu me confies reste confidentiel**. C'est ta safe place. "
+        "Pour commencer notre échange, quel est ton prénom ou ton surnom ? ✨"
+    )
+    await update.message.reply_text(accueil_message, parse_mode='Markdown')
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère les messages de l'utilisateur avec un protocole de diagnostic structuré."""
@@ -223,69 +223,140 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state", "awaiting_name")
     history = context.user_data.setdefault("history", [])
 
-    # === PROTOCOLE D'ACCUEIL (PHASE 1 - Nom) ===
+    # === ÉTAPE 1 : NOM ===
     if state == "awaiting_name":
         name_candidate = detect_name_from_text(user_message)
         if name_candidate:
             profile["name"] = name_candidate
-            context.user_data["state"] = "awaiting_context_q1"
-            await update.message.reply_text(f"Enchanté {profile['name']} ! Merci pour ta confiance. Pour commencer notre échange, {DIAGNOSTIC_QUESTIONS['q1_geo']}")
+            context.user_data["state"] = "awaiting_mode_choice" # Nouvelle étape
+            
+            # Message de confirmation et proposition du choix
+            choice_message = (
+                f"Enchanté {profile['name']} ! 🌹 Je suis ravie de faire ta connaissance.\n\n"
+                "Maintenant que nous avons posé les bases de confiance... "
+                "**Allez, dis-moi : je suis tout à toi (Mode Écoute Libre), ou tu veux que ce soit moi qui parle (Mode Diagnostic) ?** 🤔"
+            )
+            await update.message.reply_text(choice_message)
             return
         else:
-            await update.message.reply_text("J'aimerais tant connaître ton prénom. Peux-tu me le donner ?")
+             await update.message.reply_text("Pour qu'on puisse échanger plus naturellement, quel est ton prénom ou surnom ?")
+             return
+
+    # === ÉTAPE 2 : CHOIX DE PROTOCOLE ===
+    elif state == "awaiting_mode_choice":
+        response_lower = user_message.lower()
+        
+        # Détection d'une intention de parler immédiatement (réponse longue, ou choix explicite)
+        is_spontaneous_share = len(user_message.split()) > 4 and not any(q in response_lower for q in ["parle", "questions", "moi qui parle", "diagnostic"])
+        
+        if is_spontaneous_share or 'tout à toi' in response_lower or 'je parle' in response_lower:
+            # Mode 1: Écoute Active - On passe directement au mode 'chatting' et on traite le message en cours.
+            context.user_data["state"] = "chatting"
+            
+            # Traitement immédiat du message de l'utilisateur avec le Protocole PEC
+            history.append({"role": "user", "content": user_message, "ts": datetime.utcnow().isoformat()})
+            response = await chat_with_ai(profile, history) 
+            
+            if "ERREUR CRITIQUE" in response or "Désolé, je n'arrive pas à me connecter" in response:
+                 await update.message.reply_text(response)
+                 return
+
+            history.append({"role": "assistant", "content": response, "ts": datetime.utcnow().isoformat()})
+            context.user_data["history"] = history
+            await update.message.reply_text(response)
+            return
+        
+        elif 'moi qui parle' in response_lower or 'diagnostic' in response_lower or 'questions' in response_lower or 'oui' in response_lower:
+            # Mode 2: Diagnostic Structuré - On passe à la Q1 Familiale (nouvel ordre).
+            context.user_data["state"] = "awaiting_context_q1_fam"
+            await update.message.reply_text(f"Parfait, j'enclenche le mode 'exploration douce', {profile['name']}.")
+            await update.message.reply_text(f"Commençons par la fondation de ton cœur : {DIAGNOSTIC_QUESTIONS['q1_fam']}")
+            return
+        
+        else:
+            await update.message.reply_text("Je n'ai pas bien saisi. Dis-moi si tu as envie de **parler tout de suite** (je suis à toi) ou si tu préfères que ce soit **moi qui enchaîne avec quelques questions**.")
             return
 
-    # === PROTOCOLE D'ACCUEIL (PHASE 2 - Question 1 Géographie/Trajet) ===
-    elif state == "awaiting_context_q1":
-        profile["geo_info"] = user_message
-        context.user_data["state"] = "awaiting_context_q2"
+    # === PROTOCOLE D'ACCUEIL GUIDÉ (Q1 Familial) ===
+    elif state == "awaiting_context_q1_fam":
+        profile["socle_info"] = user_message # Enregistrement
+        context.user_data["state"] = "awaiting_context_q2_geo" # Nouvelle Q2
         # IA génère la transition (Validation + Question 2)
-        transition_prompt = f"L'utilisateur {profile['name']} vient de répondre à la question 1 sur son environnement : '{user_message}'. Rédige une transition douce qui remercie, valide l'info, et pose la question 2 : {DIAGNOSTIC_QUESTIONS['q2_pro']}"
+        transition_prompt = f"L'utilisateur {profile['name']} vient de répondre à la question 1 sur son socle familial : '{user_message}'. Rédige une transition douce et chaleureuse de 1 à 2 phrases maximum, puis enchaîne immédiatement avec la question 2 sans rupture. Question 2 : {DIAGNOSTIC_QUESTIONS['q2_geo']}"
         response = await chat_with_ai(profile, [{"role": "user", "content": transition_prompt}])
         await update.message.reply_text(response)
         return
     
-    # === PROTOCOLE D'ACCUEIL (PHASE 3 - Question 2 Professionnel/Social) ===
-    elif state == "awaiting_context_q2":
-        profile["pro_info"] = user_message
-        context.user_data["state"] = "awaiting_context_q3"
+    # === PROTOCOLE D'ACCUEIL GUIDÉ (Q2 Géographie/Ancrage) ===
+    elif state == "awaiting_context_q2_geo":
+        profile["geo_info"] = user_message # Enregistrement
+        context.user_data["state"] = "awaiting_context_q3_pro" # Nouvelle Q3
         # IA génère la transition (Validation + Question 3)
-        transition_prompt = f"L'utilisateur {profile['name']} vient de répondre à la question 2 sur son travail : '{user_message}'. Rédige une transition douce qui valide la situation professionnelle/sociale et pose la question 3 : {DIAGNOSTIC_QUESTIONS['q3_fam']}"
+        transition_prompt = f"L'utilisateur {profile['name']} vient de répondre à la question 2 sur son lieu de vie : '{user_message}'. Rédige une transition douce et chaleureuse de 1 à 2 phrases maximum, puis enchaîne immédiatement avec la question 3 sans rupture. Question 3 : {DIAGNOSTIC_QUESTIONS['q3_pro']}"
         response = await chat_with_ai(profile, [{"role": "user", "content": transition_prompt}])
         await update.message.reply_text(response)
         return
 
-    # === PROTOCOLE D'ACCUEIL (PHASE 4 - Question 3 Socle Familial) ===
-    elif state == "awaiting_context_q3":
-        profile["socle_info"] = user_message
-        context.user_data["state"] = "chatting"
-        # IA génère le message de clôture et de transition vers la conversation libre
-        closing_prompt = f"L'utilisateur {profile['name']} a terminé le diagnostic en répondant : '{user_message}'. Rédige un message final de 2-3 phrases qui remercie chaleureusement pour cette ouverture et invite à se confier sur ce qui le préoccupe, en utilisant son prénom."
+    # === PROTOCOLE D'ACCUEIL GUIDÉ (Q3 Professionnel/Social) ===
+    elif state == "awaiting_context_q3_pro":
+        profile["pro_info"] = user_message # Enregistrement
+        context.user_data["state"] = "chatting" # Fin de l'accueil
+        # Message de clôture généré par l'IA
+        closing_prompt = f"L'utilisateur {profile['name']} a terminé le diagnostic en répondant : '{user_message}'. Rédige un message final de 2-3 phrases qui remercie chaleureusement pour sa confiance, valide la profondeur des partages, et l'invite à se confier sur ce qui le préoccupe, en utilisant son prénom."
         response = await chat_with_ai(profile, [{"role": "user", "content": closing_prompt}])
         await update.message.reply_text(response)
         return
 
 
-    # === CONVERSATION NORMALE (PHASE 5 : CHATTING - PNL Structuré) ===
+    # === CONVERSATION NORMALE (PHASE CHATTING) ===
     elif state == 'chatting':
+        # Append user message to history
         history.append({"role": "user", "content": user_message, "ts": datetime.utcnow().isoformat()})
-        
-        # Le LLM gère l'application complète du Protocole PEC (Validation, Recadrage, Relance)
-        response = await generate_pnl_response(profile, user_message, history)
 
-        # Si l'IA obéit à une instruction de s'arrêter (Ex: "Arrête de poser des questions")
-        if "obéis immédiatement" in response.lower() or "affirmation forte" in response.lower():
-            # C'est une réponse d'obéissance, on la stocke.
-             history.append({"role": "assistant", "content": response, "ts": datetime.utcnow().isoformat()})
-             context.user_data["history"] = history
-             await update.message.reply_text(response)
-             return
+        # Compose system prompt
+        system_prompt = build_adaptive_system_prompt(profile, context.user_data.get("emotional_summary", ""))
 
-        # Stockage de la réponse
-        history.append({"role": "assistant", "content": response, "ts": datetime.utcnow().isoformat()})
+        # Compose messages payload: system + condensed context
+        msgs = []
+        tail = history[-(MAX_RECENT_TURNS * 2):]
+        for item in tail:
+            if item["role"] in {"user", "assistant"}:
+                msgs.append({"role": item["role"], "content": item["content"]})
+
+        payload_messages = [{"role": "system", "content": system_prompt}] + msgs
+
+        # Call model
+        raw_resp = await asyncio.to_thread(call_model_api_sync, payload_messages, 0.85, 400)
+
+        # If API failed, send friendly fallback and CLEAN HISTORY
+        if not raw_resp or raw_resp == "FATAL_API_KEY_ERROR":
+            reply = "Désolé, je n'arrive pas à me connecter à mon esprit. Réessaie dans un instant."
+            if raw_resp == "FATAL_API_KEY_ERROR":
+                 reply = "ERREUR CRITIQUE : Ma clé API est invalide. Veuillez vérifier TOGETHER_API_KEY."
+
+            await update.message.reply_text(reply)
+            
+            # PROTOCOLE DE NETTOYAGE : RETIRER LE MESSAGE UTILISATEUR QUI A CAUSÉ LA PANNE
+            if history and history[-1]["role"] == "user":
+                history.pop() 
+            context.user_data["history"] = history
+            logger.warning("API failed. History purged of the last user message to prevent loop.")
+            return
+
+        # Post-process response: remove identity repetition, ensure FR, shorten long outputs
+        clean_resp = post_process_response(raw_resp)
+
+        # Avoid identical repeats (bug fix from V24)
+        last_bot_reply = context.user_data.get("last_bot_reply", "")
+        if clean_resp == last_bot_reply:
+            clean_resp = clean_resp + "\n\n(Je reformule) " + ("Peux-tu préciser ?" if len(clean_resp) < 100 else "")
+
+        # Update history with assistant reply
+        history.append({"role": "assistant", "content": clean_resp, "ts": datetime.utcnow().isoformat()})
         context.user_data["history"] = history
-        await update.message.reply_text(response)
-        return
+        context.user_data["last_bot_reply"] = clean_resp
+
+        await update.message.reply_text(clean_resp)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.exception("Exception: %s", context.error)
@@ -303,7 +374,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    logger.info("Soph_IA V52 starting...")
+    logger.info("Soph_IA V55 starting...")
     application.run_polling()
 
 if __name__ == "__main__":
