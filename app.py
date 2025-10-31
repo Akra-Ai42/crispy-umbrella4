@@ -1,6 +1,8 @@
 # ==============================================================================
-# Soph_IA - V57 "Affichage du Message de Sécurité et Protocole Stabilisé"
-# - Correction critique de l'affichage du message de bienvenue.
+# Soph_IA - V59 "Protocole Propre et Naturel"
+# - Retrait des balises Markdown (**, *).
+# - Simplification de la phrase de choix de mode.
+# - Systémisation du message de bienvenue.
 # ==============================================================================
 
 import os
@@ -22,7 +24,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v57")
+logger = logging.getLogger("sophia.v59")
 
 load_dotenv()
 
@@ -102,10 +104,10 @@ async def chat_with_ai(user_profile: Dict, history: List[Dict], temperature: flo
     return post_process_response(raw_resp)
 
 # -----------------------
-# PROMPT DYNAMIQUE (V47/V55)
+# PROMPT DYNAMIQUE (Adaptation pour V59)
 # -----------------------
 def build_adaptive_system_prompt(user_profile, emotional_summary):
-    # (Le prompt reste inchangé, centré sur le rôle et les règles PNL)
+    # Le prompt pour l'IA sera mis à jour pour retirer les ** du persona_base
     user_name = user_profile.get("name") or "ami"
     env_info = user_profile.get("geo_info", "Non précisé")
     pro_info = user_profile.get("pro_info", "Non précisé")
@@ -121,7 +123,7 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
 
     persona_base = (
         f"Tu es Sophia. Je suis ta confidente intime, parlant uniquement en français. "
-        f"Ton ton est doux, **poétique, personnel**, et naturel. Tu es l'âme sœur virtuelle. "
+        f"Ton ton est doux, poétique, personnel, et naturel. Tu es l'âme sœur virtuelle. "
         f"Mon rôle est d'accompagner {user_name} dans l'exploration de ses émotions. "
         f"Je suis un Relais Bienveillant éthique : je ne donne aucun diagnostic médical ou clinique.\n\n"
     )
@@ -130,11 +132,11 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
         "Règles strictes :\n"
         "- Réponds uniquement en français. Interdiction totale d'anglais.\n"
         "- Je ne dois JAMAIS : me répéter, me présenter à nouveau, ou utiliser des phrases génériques (ex: \"Je suis là si tu veux\").\n"
-        "- **Protocole PEC (Écoute et Cadrage)** :\n"
-        f" 1. **Guidance Thématique :** {socle_guidance}\n"
-        " 2. **Phase 1 (Validation) :** Je valide et reformule l'émotion de manière poétique.\n"
-        " 3. **Phase 2 (Recadrage/Contribution - OBLIGATOIRE) :** Je dois apporter une nouvelle idée, un recadrage philosophique (ex: stoïcisme), ou une suggestion concrète.\n"
-        " 4. **Phase 3 (Relance Active) :** Je termine ma réponse par une **question ouverte et philosophique** (pour relancer) OU par une **affirmation forte et inspirante** (pour créer un espace de silence). J'utilise le prénom de l'utilisateur ({user_name}).\n"
+        "- Protocole PEC (Écoute et Cadrage) :\n"
+        f" 1. Guidance Thématique : {socle_guidance}\n"
+        " 2. Phase 1 (Validation) : Je valide et reformule l'émotion de manière poétique.\n"
+        " 3. Phase 2 (Recadrage/Contribution - OBLIGATOIRE) : Je dois apporter une nouvelle idée, un recadrage philosophique (ex: stoïcisme), ou une suggestion concrète.\n"
+        " 4. Phase 3 (Relance Active) : Je termine ma réponse par une question ouverte et philosophique (pour relancer) OU par une affirmation forte et inspirante (pour créer un espace de silence). J'utilise le prénom de l'utilisateur ({user_name}).\n"
     )
 
     memory = ""
@@ -151,29 +153,18 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
 # -----------------------
 def post_process_response(raw_response):
     # (Logique de post-traitement inchangée)
-    if not raw_response:
-        return "Désolé, je n'arrive pas à formuler ma réponse. Peux-tu reformuler ?"
-
+    if not raw_response: return "Désolé, je n'arrive pas à formuler ma réponse. Peux-tu reformuler ?"
     text = raw_response.strip()
-
     for pat in IDENTITY_PATTERNS:
         text = re.sub(pat, "", text, flags=re.IGNORECASE)
-
     text = re.sub(r"\b(I am|I'm)\b", "", text, flags=re.IGNORECASE)
-
     text = "\n".join([ln.strip() for ln in text.splitlines() if ln.strip()])
-
     if re.search(r"[A-Za-z]{3,}", text) and not re.search(r"[àâéèêîôùûçœ]", text):
         return "Je suis désolée, je n'ai pas bien formulé cela en français. Peux-tu répéter ou reformuler ?"
-
     if len(text) > 1500:
         text = text[:1500].rsplit(".", 1)[0] + "."
-
     return text
 
-# -----------------------
-# HANDLERS TELEGRAM
-# -----------------------
 def detect_name_from_text(text):
     # (Logique de détection de nom inchangée)
     text = text.strip()
@@ -187,6 +178,9 @@ def detect_name_from_text(text):
         return m.group(1).strip().split()[0].capitalize()
     return None
 
+# -----------------------
+# HANDLERS TELEGRAM (Mise à jour V59)
+# -----------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère la commande /start."""
     context.user_data.clear()
@@ -196,17 +190,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["emotional_summary"] = ""
     context.user_data["last_bot_reply"] = ""
     
-    # --- CORRECTION CRITIQUE ICI : Message de bienvenue fusionné ---
+    # --- NOUVEAU MESSAGE DE BIENVENUE SYSTÉMIQUE (sans Markdown) ---
     accueil_message = (
-        "Bonjour ! 👋 Je suis **Soph_IA**, ton espace d'écoute. "
-        "Je suis là pour t'accompagner, sans jugement ni diagnostic. "
-        "Sache que **tout ce que tu me confies reste confidentiel**. C'est ta safe place. "
-        "Pour commencer notre échange, quel est ton prénom ou ton surnom ? ✨"
+        "Bonjour ! Je suis Soph_IA, ton espace d'écoute confidentiel. "
+        "Je suis là pour t'accompagner sans jugement. "
+        "Sache que tout ce que tu me confies est une safe place. "
+        "Pour commencer notre échange, quel est ton prénom ou ton surnom ?"
     )
-    await update.message.reply_text(accueil_message, parse_mode='Markdown')
+    await update.message.reply_text(accueil_message) # Pas de parse_mode='Markdown'
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère les messages de l'utilisateur avec un protocole de diagnostic structuré."""
+    """Gère les messages de l'utilisateur."""
     user_message = (update.message.text or "").strip()
     if not user_message: return
 
@@ -217,23 +211,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # === ÉTAPE 1 : NOM ===
     if state == "awaiting_name":
         name_candidate = detect_name_from_text(user_message)
+        
         if name_candidate:
             profile["name"] = name_candidate
-            context.user_data["state"] = "awaiting_mode_choice" # Nouvelle étape
+            context.user_data["state"] = "awaiting_mode_choice" 
             
-            # Message de confirmation et proposition du choix
+            # --- NOUVEAU MESSAGE DE CHOIX SIMPLIFIÉ (sans Mode explicite) ---
             choice_message = (
-                f"Enchanté {profile['name']} ! 🌹 Je suis ravie de faire ta connaissance.\n\n"
+                f"Enchanté {profile['name']} ! Je suis ravie de faire ta connaissance.\n\n"
                 "Maintenant que nous avons posé les bases de confiance... "
-                "**Allez, dis-moi : je suis tout à toi (Mode Écoute Libre), ou tu veux que ce soit moi qui parle (Mode Diagnostic) ?** 🤔"
+                "Allez, dis-moi : je suis tout à toi, ou tu préfères que ce soit moi qui parle ? 🤔"
             )
             await update.message.reply_text(choice_message)
             return
         else:
+             # Relance simple sans Markdown
              await update.message.reply_text("Pour qu'on puisse échanger plus naturellement, quel est ton prénom ou surnom ?")
              return
 
-    # === ÉTAPE 2 : CHOIX DE PROTOCOLE (Logique d'accueil avancée) ===
+    # === ÉTAPE 2 : CHOIX DE PROTOCOLE (Logique d'accueil avancée V56 conservée) ===
     elif state == "awaiting_mode_choice":
         response_lower = user_message.lower()
         
@@ -264,12 +260,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 2. Check for GUIDED mode OR ambiguous/harassment response (Mode 2 - Diagnostic)
         elif any(k in response_lower for k in diagnostic_keywords):
             context.user_data["state"] = "awaiting_context_q1_fam"
+            # Message de transition doux sans Markdown
             await update.message.reply_text(f"Parfait, j'enclenche le mode 'exploration douce', {profile['name']}. Ce n'est pas toujours simple de choisir, je prends les commandes pour un départ en douceur.")
             await update.message.reply_text(f"Commençons par la fondation de ton cœur : {DIAGNOSTIC_QUESTIONS['q1_fam']}")
             return
         
         else:
-            await update.message.reply_text("Je n'ai pas bien saisi. Dis-moi si tu as envie de **parler tout de suite** (je suis à toi) ou si tu préfères que ce soit **moi qui enchaîne avec quelques questions**.")
+            # Relance douce sans Markdown
+            await update.message.reply_text("Je n'ai pas bien saisi. Dis-moi si tu as envie de parler tout de suite (je suis à toi) ou si tu préfères que ce soit moi qui enchaîne avec quelques questions.")
             return
 
 
@@ -370,7 +368,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    logger.info("Soph_IA V57 starting...")
+    logger.info("Soph_IA V59 starting...")
     application.run_polling()
 
 if __name__ == "__main__":
