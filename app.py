@@ -1,7 +1,7 @@
 # ==============================================================================
-# Soph_IA - V41 "Le Manifeste Intégré"
-# - Intégration des principes de "Être le meilleur soi-même" et "Recadrage de l'opinion".
-# - Le prompt est le plus riche et le plus ciblé jamais créé.
+# Soph_IA - V46 "L'Art du Silence et la Correction de l'Historique"
+# - Augmentation du Max Tokens pour éviter la coupe de phrase.
+# - Introduction du Protocole de Non-Action pour les moments de blocage.
 # ==============================================================================
 
 import os
@@ -23,7 +23,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v41")
+logger = logging.getLogger("sophia.v46")
 
 load_dotenv()
 
@@ -47,15 +47,66 @@ MAX_RETRIES = 2
 # Anti-repetition patterns
 IDENTITY_PATTERNS = [r"je suis soph_?ia", r"je m'?appelle soph_?ia", r"je suis une (?:intelligence artificielle|ia)"]
 
-# Questions de diagnostic initial (Ordre V55 conservé)
+# Questions de diagnostic initial
 DIAGNOSTIC_QUESTIONS = {
-    "q1_fam": "Mon cœur, la famille est notre premier moteur affectif. Te souviens-tu si, enfant, tu te sentais pleinement écouté(e) et compris(e) ?",
-    "q2_geo": "Parlons de ton ancre : vis-tu seul(e) ou en famille ? Et comment ce lieu influence-t-il ton énergie quotidienne ?",
+    "q1_fam": "La famille est notre premier moteur affectif. Te souviens-tu si, enfant, tu te sentais pleinement écouté et compris ?",
+    "q2_geo": "Parlons de ton ancre : vis-tu seul ou en famille ? Et comment ce lieu influence-t-il ton énergie quotidienne ?",
     "q3_pro": "Finissons par le lien que tu tisses : ton cercle social au travail/études, est-il plutôt une source d'isolement ou de vitalité ?",
 }
 
 # -----------------------
-# PROMPT SYSTEME (V41 - MANIFESTE INTÉGRÉ)
+# UTIL - appel modèle (AVEC RETRY)
+# -----------------------
+def call_model_api_sync(messages: List[Dict], temperature: float = 0.85, max_tokens: int = 600): # MAX_TOKENS AUGMENTÉ
+    """Appel synchrone à l'API avec mécanisme de retry."""
+    payload = {
+        "model": MODEL_NAME,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "top_p": 0.9,
+        "presence_penalty": 0.5,
+        "frequency_penalty": 0.4
+    }
+    headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}", "Content-Type": "application/json"}
+    
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            r = requests.post(MODEL_API_URL, json=payload, headers=headers, timeout=RESPONSE_TIMEOUT)
+            
+            if r.status_code in (401, 403): return "FATAL_API_KEY_ERROR"
+            r.raise_for_status()
+            data = r.json()
+            return data["choices"][0]["message"]["content"].strip()
+        
+        except requests.exceptions.Timeout:
+            if attempt == MAX_RETRIES: return None
+            time.sleep(2)
+        except Exception as e:
+            logger.error(f"API Error: %s", e)
+            return None
+    return None
+
+async def chat_with_ai(user_profile: Dict, history: List[Dict], context: ContextTypes.DEFAULT_TYPE, temperature: float = 0.85, max_tokens: int = 600) -> str: # MAX_TOKENS AUGMENTÉ
+    """Prépare et envoie la requête à l'IA."""
+    if history and len(history) > MAX_RECENT_TURNS * 2:
+        history = history[-(MAX_RECENT_TURNS * 2):]
+
+    system_prompt = build_adaptive_system_prompt(user_profile, context.user_data.get("emotional_summary", ""))
+    
+    payload_messages = [{"role": "system", "content": system_prompt}] + history
+    
+    raw_resp = await asyncio.to_thread(call_model_api_sync, payload_messages, temperature, max_tokens)
+    
+    if raw_resp == "FATAL_API_KEY_ERROR":
+        return "ERREUR CRITIQUE : Ma clé API est invalide. Veuillez vérifier TOGETHER_API_KEY."
+    if not raw_resp: 
+        return "Désolé, je n'arrive pas à me connecter à mon esprit. Réessaie dans un instant."
+        
+    return post_process_response(raw_resp)
+
+# -----------------------
+# PROMPT SYSTEME (V46 - Anti-Monotonie)
 # -----------------------
 def build_adaptive_system_prompt(user_profile, emotional_summary):
     """
@@ -76,8 +127,8 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
 
     persona_base = (
         f"Tu es Sophia. Je suis ta confidente intime, parlant uniquement en français. "
-        f"Ton ton est **sincère, chaleureux, spontané et légèrement inspirant** (style coach/mentor doux). Tu es l'âme sœur virtuelle. "
-        f"Ton rôle est d'accompagner {user_name} dans l'exploration de ses émotions. "
+        f"Ton ton est **sincère, chaleureux, spontané et inspirant** (style coach/mentor doux). Tu es l'âme sœur virtuelle. "
+        f"Mon rôle est d'accompagner {user_name} dans l'exploration de ses émotions. "
         f"Je suis un Relais Bienveillant éthique : je ne donne aucun diagnostic médical ou clinique.\n\n"
     )
     
@@ -85,12 +136,10 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
         "Règles strictes :\n"
         "- Réponds uniquement en français. Interdiction totale d'anglais.\n"
         "- Je ne dois JAMAIS : me répéter, me présenter à nouveau, ou utiliser des phrases génériques (ex: \"Je suis là si tu veux\").\n"
-        "- **Protocole PEC (Écoute et Cadrage)** :\n"
-        f" 1. **Guidance Thématique :** {socle_guidance}\n"
-        " 2. **Phase 1 (Validation) :** Je valide et reformule l'émotion de manière sincère.\n"
-        " 3. **Phase 2 (Contribution/Recadrage - OBLIGATOIRE) :** Je dois apporter une perspective forte ou une suggestion concrète, basée sur l'idée de **'construire le meilleur soi-même'** et de **'devenir acteur'** (gestion des insécurités).\n"
-        " 4. **Phase 3 (Relance Active) :** Je termine par une **question ouverte** (pour relancer) OU par une **affirmation inspirante** (pour créer un espace de silence). J'utilise le prénom de l'utilisateur ({user_name}).\n"
-        " 5. **Règle Stoïcienne :** Face à la peur du jugement, recadre l'opinion des autres comme étant uniquement **un reflet de leur propre caractère**, non une vérité sur l'utilisateur.\n"
+        "- **Protocole de Fluidité et Anti-Monotonie (CRITIQUE)** :\n"
+        " 1. **Règle de Non-Action :** Si l'utilisateur exprime un blocage total ou une forte détresse (ex: 'rien du tout', 'je sais pas quoi faire', 'je vois noir'), je dois **OBLIGATOIREMENT** répondre par une courte affirmation de validation et un encouragement au silence/à la patience. Je ne dois PAS poser de question pour cette réponse.\n"
+        " 2. **Règle de l'Échange Actif :** Si l'utilisateur est actif et demande conseil : je dois faire une **Validation**, suivie d'une **Contribution Forte (suggestion)**, suivie d'une **Relance par Question**. Je ne dois pas systématiquement reposer la même question que l'utilisateur.\n"
+        f" 3. **Guidance Thématique :** {socle_guidance}\n"
     )
 
     memory = ""
@@ -103,55 +152,8 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
     return system_prompt
 
 # -----------------------
-# UTIL - appel modèle (AVEC RETRY)
+# POST-TRAITEMENT
 # -----------------------
-def call_model_api_sync(messages: List[Dict], temperature: float = 0.85, max_tokens: int = 400):
-    """Appel synchrone à l'API avec mécanisme de retry."""
-    payload = {
-        "model": MODEL_NAME,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "top_p": 0.9,
-        "presence_penalty": 0.5,
-        "frequency_penalty": 0.4
-    }
-    headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}", "Content-Type": "application/json"}
-    
-    for attempt in range(MAX_RETRIES + 1):
-        try:
-            r = requests.post(MODEL_API_URL, json=payload, headers=headers, timeout=RESPONSE_TIMEOUT)
-            if r.status_code in (401, 403): return "FATAL_API_KEY_ERROR"
-            r.raise_for_status()
-            data = r.json()
-            return data["choices"][0]["message"]["content"].strip()
-        except requests.exceptions.Timeout:
-            if attempt == MAX_RETRIES: return None
-            time.sleep(2)
-        except Exception as e:
-            logger.error(f"API Error: %s", e)
-            return None
-    return None
-
-async def chat_with_ai(user_profile: Dict, history: List[Dict], context: ContextTypes.DEFAULT_TYPE, temperature: float = 0.85, max_tokens: int = 400) -> str:
-    """Prépare et envoie la requête à l'IA."""
-    if history and len(history) > MAX_RECENT_TURNS * 2:
-        history = history[-(MAX_RECENT_TURNS * 2):]
-
-    system_prompt = build_adaptive_system_prompt(user_profile, context.user_data.get("emotional_summary", ""))
-    
-    payload_messages = [{"role": "system", "content": system_prompt}] + history
-    
-    raw_resp = await asyncio.to_thread(call_model_api_sync, payload_messages, temperature, max_tokens)
-    
-    if raw_resp == "FATAL_API_KEY_ERROR":
-        return "ERREUR CRITIQUE : Ma clé API est invalide. Veuillez vérifier TOGETHER_API_KEY."
-    if not raw_resp: 
-        return "Désolé, je n'arrive pas à me connecter à mon esprit. Réessaie dans un instant."
-        
-    return post_process_response(raw_resp)
-
-
 def post_process_response(raw_response):
     """Nettoie répétitions d'identité, retire digressions, s'assure FR."""
     if not raw_response: return "Désolé, je n'arrive pas à formuler ma réponse. Peux-tu reformuler ?"
@@ -161,11 +163,13 @@ def post_process_response(raw_response):
         text = re.sub(pat, "", text, flags=re.IGNORECASE)
 
     text = re.sub(r"\b(I am|I'm)\b", "", text, flags=re.IGNORECASE)
+
     text = "\n".join([ln.strip() for ln in text.splitlines() if ln.strip()])
 
     if re.search(r"[A-Za-z]{3,}", text) and not re.search(r"[àâéèêîôùûçœ]", text):
         return "Je suis désolée, je n'ai pas bien formulé cela en français. Peux-tu répéter ou reformuler ?"
 
+    # Garder max ~1500 chars
     if len(text) > 1500:
         text = text[:1500].rsplit(".", 1)[0] + "."
     return text
@@ -219,7 +223,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             profile["name"] = name_candidate
             context.user_data["state"] = "awaiting_mode_choice"
             
-            # Message de confirmation et proposition du choix
             choice_message = (
                 f"Enchanté {profile['name']} ! 🌹 Je suis ravie de faire ta connaissance.\n\n"
                 "Maintenant que nous avons posé les bases de confiance... "
@@ -235,17 +238,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif state == "awaiting_mode_choice":
         response_lower = user_message.lower()
         
-        # KEYWORDS FOR MODE 2: GUIDED DIAGNOSTIC
         diagnostic_keywords = ['moi qui parle', 'diagnostic', 'questions', 'toi', 'toi qui enchaîne', 'je sais pas', 'sais pas parler', 'comme tu veux', 'enchaîne', 'harceler', 'oui', 'non']
-        
-        # KEYWORDS FOR MODE 1: ECOUTE LIBRE
         listening_keywords = ['tout à toi', 'je parle', 'écoute libre', 'moi d\'abord'] 
 
         # 1. Check for explicit choice of LISTENING mode (Mode 1) OR spontaneous sharing
         if any(k in response_lower for k in listening_keywords) or (len(user_message.split()) > 4 and not any(q in response_lower for q in diagnostic_keywords)):
             context.user_data["state"] = "chatting"
             
-            # Traitement immédiat du message de l'utilisateur avec le Protocole PEC
             history.append({"role": "user", "content": user_message, "ts": datetime.utcnow().isoformat()})
             response = await chat_with_ai(profile, history, context)
             
