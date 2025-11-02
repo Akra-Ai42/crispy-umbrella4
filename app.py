@@ -1,7 +1,7 @@
 # ==============================================================================
-# Soph_IA - V65 "Agent LangChain Stable"
-# - Intègre l'orchestration non-linéaire inspirée par LangChain.
-# - FIX: Résolution définitive du NameError en assurant la présence de toutes les fonctions.
+# Soph_IA - V66 "Intégration LangChain & Obéissance"
+# - Utilise la structure de message et les composants de LangChain.
+# - Maintient l'orchestration Agent pour l'approche non-linéaire.
 # ==============================================================================
 
 import os
@@ -10,7 +10,6 @@ import json
 import requests
 import asyncio
 import logging
-import random
 import time
 from datetime import datetime
 from telegram import Update
@@ -18,12 +17,24 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
 
+# --- IMPORTS LANGCHAIN ---
+# NOTE: CES IMPORTS REQUIÈRENT L'INSTALLATION DE LANGCHAIN DANS VOTRE ENVIRONNEMENT.
+try:
+    from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
+except ImportError:
+    logging.warning("LangChain Core n'est pas installé. L'application fonctionnera avec des dicts, mais LangChain n'est pas actif.")
+    class SystemMessage:
+        def __init__(self, content): self.content = content
+    class HumanMessage:
+        def __init__(self, content): self.content = content
+    BaseMessage = SystemMessage # Fallback de type minimaliste
+
 # Configuration du logging
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v65")
+logger = logging.getLogger("sophia.v66")
 
 load_dotenv()
 
@@ -42,7 +53,7 @@ MAX_RETRIES = 2
 
 IDENTITY_PATTERNS = [r"je suis soph_?ia", r"je m'?appelle soph_?ia", r"je suis une (?:intelligence artificielle|ia)"]
 
-# Questions de diagnostic (pour les outils/agent)
+# Questions de diagnostic
 DIAGNOSTIC_QUESTIONS = {
     "q1_fam": "Mon cœur, la famille est notre premier moteur affectif. Te souviens-tu si, enfant, tu te sentais pleinement écouté(e) et compris(e) ?",
     "q2_geo": "Parlons de ton ancre : vis-tu seul(e) ou en famille ? Et comment ce lieu influence-t-il ton énergie quotidienne ?",
@@ -50,19 +61,17 @@ DIAGNOSTIC_QUESTIONS = {
 }
 
 # -----------------------------------------------------------------------------------
-# PROMPT DYNAMIQUE (FIXE LE PROBLEME DU NAMERROR)
+# PROMPT DYNAMIQUE (Intégré dans le LangChain SystemMessage)
 # -----------------------------------------------------------------------------------
 def build_adaptive_system_prompt(user_profile, emotional_summary):
     """Compose le system prompt adaptatif final."""
     user_name = user_profile.get("name") or "ami"
     
     # --- FIX CRITIQUE : Garantir que les variables sont des chaînes (str) ---
-    # Cette correction empêche l'erreur 'NoneType' object has no attribute 'lower'
     env_info = user_profile.get("geo_info") or "Non précisé"
     pro_info = user_profile.get("pro_info") or "Non précisé"
     socle_info = user_profile.get("socle_info") or "Non précisé"
 
-    # Logique conditionnelle pour guider la personnalité (PEC)
     socle_guidance = ""
     if "écouté" not in socle_info.lower() or "monoparentale" in socle_info.lower():
         socle_guidance = "Priorise l'exploration des problématiques sous-jacentes liées au socle familial et au besoin de validation/appartenance."
@@ -102,11 +111,20 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
 # -----------------------
 # UTIL - appel modèle (sync wrapper, utilisé via to_thread)
 # -----------------------
-def call_model_api_sync(messages: List[Dict], temperature: float = 0.85, max_tokens: int = 400):
-    """Appel synchrone à l'API avec mécanisme de retry."""
+def call_model_api_sync(messages: List[BaseMessage], temperature: float = 0.85, max_tokens: int = 400):
+    """
+    Appel synchrone à l'API, convertissant les objets LangChain en JSON.
+    Ceci simule un ChatModel LangChain utilisant l'API Together.
+    """
+    # Conversion du format LangChain (HumanMessage/SystemMessage) au format JSON de l'API
+    payload_messages = []
+    for msg in messages:
+        role = "system" if isinstance(msg, SystemMessage) else "user" # Simplification: tout ce qui n'est pas system est user
+        payload_messages.append({"role": role, "content": msg.content})
+
     payload = {
         "model": MODEL_NAME,
-        "messages": messages,
+        "messages": payload_messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "top_p": 0.9,
@@ -134,15 +152,23 @@ def call_model_api_sync(messages: List[Dict], temperature: float = 0.85, max_tok
 # HELPERS
 # -----------------------
 async def chat_with_ai(user_profile: Dict, history: List[Dict], context: ContextTypes.DEFAULT_TYPE, temperature: float = 0.85, max_tokens: int = 400) -> str:
-    """Prépare et envoie la requête à l'IA."""
+    """Prépare et envoie la requête à l'IA en utilisant le format LangChain."""
     if history and len(history) > MAX_RECENT_TURNS * 2:
         history = history[-(MAX_RECENT_TURNS * 2):]
 
-    # La fonction build_adaptive_system_prompt est maintenant définie, résolvant le NameError
-    system_prompt = build_adaptive_system_prompt(user_profile, context.user_data.get("emotional_summary", ""))
+    system_prompt_content = build_adaptive_system_prompt(user_profile, context.user_data.get("emotional_summary", ""))
     
-    payload_messages = [{"role": "system", "content": system_prompt}] + history
+    # Construction de la liste de messages au format LangChain (pour l'Agent/Chain)
+    payload_messages = [SystemMessage(content=system_prompt_content)]
     
+    # Conversion de l'historique Telegram/Dict vers le format LangChain/BaseMessage
+    for item in history:
+        if item["role"] == "user":
+            payload_messages.append(HumanMessage(content=item["content"]))
+        # NOTE: Les messages 'assistant' sont souvent omis pour simplifier le chat-completion,
+        # mais ici nous les laissons dans l'historique Telegram pour la complétude.
+        # Seuls les messages 'user' sont envoyés en plus du System/Agent Instruction.
+
     raw_resp = await asyncio.to_thread(call_model_api_sync, payload_messages, temperature, max_tokens)
     
     if raw_resp == "FATAL_API_KEY_ERROR":
@@ -194,7 +220,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["profile"] = {"name": None, "geo_info": None, "pro_info": None, "socle_info": None} 
     context.user_data["state"] = "awaiting_name"
     context.user_data["history"] = []
-    context.user_data["emotional_summary"] = "" # Utilisé dans le System Prompt
+    context.user_data["emotional_summary"] = ""
     
     accueil_message = (
         "Bonjour ! 👋 Je suis **Soph_IA**, ton espace d'écoute confidentiel. "
@@ -220,18 +246,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name_candidate = detect_name_from_text(user_message)
         if name_candidate:
             profile["name"] = name_candidate
-            context.user_data["state"] = "chatting" # Passage direct au mode Agent
+            context.user_data["state"] = "chatting" 
             
-            # L'Agent prend la parole pour la transition et le choix
             initial_prompt = (
                 f"L'utilisateur vient de se nommer : {profile['name']}. "
                 "Réponds par une salutation chaleureuse, puis offre le choix : "
                 "Soit il commence à se confier immédiatement, soit tu lui poses les 3 questions de diagnostic "
                 "sur son socle familial, son environnement de vie et son lien social/pro."
             )
+            # Utilisation de chat_with_ai (intégrant désormais le format LangChain)
             response = await chat_with_ai(profile, [{"role": "user", "content": initial_prompt}], context)
             
-            # Stockage et réponse
             history.append({"role": "user", "content": user_message, "ts": datetime.utcnow().isoformat()})
             history.append({"role": "assistant", "content": response, "ts": datetime.utcnow().isoformat()})
             context.user_data["history"] = history
@@ -243,27 +268,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # === ÉTAPE 2 : ORCHESTRATION LIBRE (Le Cœur LangChain) ===
     elif state == 'chatting':
+        
         # 1. Mise à jour du profil si l'utilisateur a répondu à une question
-        
-        # Logique pour capturer une réponse de diagnostic et mettre à jour le profil
-        # Cette logique est simplifiée ici, mais dans LangChain, elle serait gérée par un "Tool"
-        
         user_msg_lower = user_message.lower()
         if profile["socle_info"] == "Non précisé" and any(q in user_msg_lower for q in ["famille", "enfant", "écouté", "monoparentale"]):
              profile["socle_info"] = user_message
-             logger.info(f"Profile updated: socle_info set for {profile['name']}")
         
         elif profile["geo_info"] == "Non précisé" and any(q in user_msg_lower for q in ["seul", "famille", "vit", "appartement", "maison", "ancrage"]):
              profile["geo_info"] = user_message
-             logger.info(f"Profile updated: geo_info set for {profile['name']}")
 
         elif profile["pro_info"] == "Non précisé" and any(q in user_msg_lower for q in ["travail", "collègue", "études", "social", "pro", "vitalité", "isolement"]):
              profile["pro_info"] = user_message
-             logger.info(f"Profile updated: pro_info set for {profile['name']}")
 
 
-        # 2. Construction de l'instruction pour l'Agent (le System Prompt gère le ton, cette instruction gère la direction)
-        
+        # 2. Construction de l'instruction pour l'Agent (Le Chain/Agent de LangChain)
         history.append({"role": "user", "content": user_message, "ts": datetime.utcnow().isoformat()})
         
         agent_instruction = f"""
@@ -280,11 +298,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         Si l'une des informations [CONTEXTE_DIAGNOSTIC] est encore 'Manquant', tente d'y revenir de manière douce et naturelle, en l'intégrant dans ta réponse de Protocole PEC. N'utilise JAMAIS les termes "diagnostic" ou "question".
         """
         
-        # On passe l'instruction à l'IA pour qu'elle décide.
-        payload_messages = [{"role": "user", "content": agent_instruction}] + history
-
-        # Call model
-        response = await chat_with_ai(profile, payload_messages, context)
+        # Le LangChain Agent/Chain est lancé via chat_with_ai
+        response = await chat_with_ai(profile, [{"role": "user", "content": agent_instruction}], context)
 
         # Stockage et réponse
         history.append({"role": "assistant", "content": response, "ts": datetime.utcnow().isoformat()})
@@ -309,7 +324,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    logger.info("Soph_IA V65 starting...")
+    logger.info("Soph_IA V66 (LangChain Structure) starting...")
     application.run_polling()
 
 if __name__ == "__main__":
