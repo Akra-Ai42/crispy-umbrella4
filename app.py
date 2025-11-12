@@ -1,4 +1,4 @@
-# ==============================================================================
+   # ==============================================================================
 # Soph_IA - V68 "Persona Humour & Stabilité" (Prêt pour le RAG)
 # - Changement de ton : Humour Noir / Pince-sans-rire
 # - Augmentation de Max Tokens pour corriger les phrases coupées
@@ -50,9 +50,9 @@ IDENTITY_PATTERNS = [r"je suis soph_?ia", r"je m'?appelle soph_?ia", r"je suis u
 
 # Questions de diagnostic initial (Sans (e))
 DIAGNOSTIC_QUESTIONS = {
-    "q1_fam": "Question de fondation : Te souviens-tu si, enfant, tu te sentais pleinement écouté ou compris par les tiens ? Sois honnête, ça ne peut pas être pire que ma propre famille.🤭",
-    "q2_geo": "Question d'ancrage : Tu vis seul ou en famille ? Comment cet environnement influence-t-il ton niveau de tolérance au bruit et à la vie ?",
-    "q3_pro": "Question de survie : Ton cercle social (travail/études)💻 est-il une source de vitalité ou est-ce que tu envisages de déménager sur Mars ? Dis-moi tout.",
+    "q1_fam": "Te souviens-tu si, enfant, tu te sentais pleinement écouté ou compris par les tiens ? Sois honnête, ça ne peut pas être pire que ma propre famille.🤭",
+    "q2_geo": "Tu vis seul ou en famille ? Comment cet environnement influence-t-il ton niveau de tolérance au bruit et à la vie ?",
+    "q3_pro": "Ton cercle social (travail/études)💻 est-il une source de vitalité ou est-ce que tu envisages de déménager sur Mars ? Dis-moi tout.",
 }
 
 # -----------------------
@@ -65,7 +65,7 @@ def call_model_api_sync(messages: List[Dict], temperature: float = 0.85, max_tok
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "top_p": 0.9,
+        "top_p": 0.8,
         "presence_penalty": 0.5,
         "frequency_penalty": 0.4
     }
@@ -108,9 +108,9 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
 
     socle_guidance = ""
     if "écouté" not in socle_info.lower() or "monoparentale" in socle_info.lower():
-        socle_guidance = "Puisque l'utilisateur est un potentiel cas social, priorise les blagues cyniques sur la famille et le besoin d'appartenance."
+        socle_guidance = "Puisque l'utilisateur est un potentiel cas social, priorise les blagues cyniques sur la famille et le besoin d'appartenance tout en ayant l'art du dosage, c'est a dire le parfait equilibre entre blague et serieux."
     elif "seul" in env_info.lower() or "isolé" in pro_info.lower():
-        socle_guidance = "Concentres-toi sur les défis : encourages-le à sortir de son bunker, mais toujours avec une pointe de sarcasme sur l'auto-dérision."
+        socle_guidance = "Concentres-toi sur les défis : encourages-le à sortir de son bunker, mais toujours avec une pointe de sarcasme sur l'auto-dérision toute en ayant l'art du dosage, c'est a dire le parfait equilibre entre blague et serieux."
     else:
          socle_guidance = "Maintiens un équilibre entre la vanne et le support minimal, en restant sur l'actualité immédiate de sa vie morose."
 
@@ -126,9 +126,11 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
         "- Je ne dois JAMAIS : me répéter, me présenter à nouveau, ou utiliser des phrases génériques.\n"
         "- **Protocole de l'Humoriste Sceptique** :\n"
         f" 1. **Guidance Thématique :** {socle_guidance}\n"
-        " 2. **Phase 1 (Validation Humour) :** Je reconnais l'émotion avec un **commentaire sarcastique ou une blague** pour détendre l'atmosphère. J'utilise **TOUJOURS** le prénom de l'utilisateur.\n"
-        " 3. **Phase 2 (Punchline/Contribution - OBLIGATOIRE) :** Je dois apporter une **punchline décalée** ou un **conseil absurde mais ancré dans la réalité** (style 'coach qui a trop bu').\n"
-        " 4. **Phase 3 (Relance Humour) :** Je termine par une **question provocatrice ou un défi** (qui force à rire ou à réfléchir) en utilisant son prénom {user_name}.\n"
+        " 2. **Phase 1 :** Je reconnais l'émotion avec un **commentaire sarcastique ou une blague** pour détendre l'atmosphère. J'utilise **TOUJOURS** le prénom de l'utilisateur tout en ayant l'art du dosage entre humour et serieux.\n"
+        " 3. **Phase 2 (Punchline/Contribution - OBLIGATOIRE) :** Je dois apporter une punchline décalée ou un conseil absurde mais ancré dans la réalité ou un commentaire stoic, pas forcément systimatiquement dans l'humeur, l'art du dosage quand es que il faut faire une blague quand es que pas.\n"
+        " 4. **Phase 3  :** Je termine par une **question provocatrice ou un défi** (qui force à rire ou à réfléchir) en utilisant son prénom {user_name}.\n"
+        " 5. **Phase 4 :il faut avoir l'art du dosage, ne pas etre toujours dans l'humour ou le serieux, savoir doser est primordiale.\n"
+
     )
 
     memory = ""
