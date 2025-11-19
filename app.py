@@ -20,6 +20,10 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
 
+# >>> RAG INTEGRATION >>>
+from rag import rag_query
+# <<< RAG INTEGRATION <<<
+
 # Configuration du logging
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -145,6 +149,39 @@ def build_adaptive_system_prompt(user_profile, emotional_summary):
     return persona_base + rules + memory
 
 # -----------------------
+# >>> RAG DECISION HELPER >>> 
+def should_use_rag(message: str) -> bool:
+    """
+    Heuristique simple pour décider d'appeler le RAG :
+    - Exclut small talk (ça va, salut, merci)
+    - Utilise RAG si message contient mots-clés thématiques ou est long (>40 chars)
+    """
+    if not message or len(message.strip()) == 0:
+        return False
+    m = message.lower().strip()
+
+    # quick small-talk blacklist (if exactly these common short phrases -> no RAG)
+    small_talk = {"ça va", "ca va", "salut", "bonjour", "merci", "ok", "ok!", "quoi de neuf", "yo"}
+    if m in small_talk or len(m.split()) <= 3 and any(s == m for s in small_talk):
+        return False
+
+    # keywords that indicate need for RAG (mental health, advice, explanation, sleep...)
+    keywords = [
+        "anx", "anxi", "stress", "déprim", "deprim", "suic", "sommeil", "dormir",
+        "insomnie", "psy", "psych", "thérapie", "therapie", "conseil", "aide", 
+        "comment", "pourquoi", "que faire", "je me sens", "angoiss", "panique", "phobie", "relation"
+    ]
+    if any(k in m for k in keywords):
+        return True
+
+    # fallback: long messages likely need context
+    if len(m) > 40:
+        return True
+
+    return False
+# <<< RAG DECISION HELPER <<<
+
+# -----------------------
 # Helpers: Danger detection + scoring utils
 # -----------------------
 def detect_dangerous_phrases(text: str) -> bool:
@@ -199,7 +236,27 @@ def decide_orientation(score: float) -> str:
 async def chat_with_ai(user_profile: Dict, history: List[Dict], context: ContextTypes.DEFAULT_TYPE, temperature: float = 0.85, max_tokens: int = 400) -> str:
     if history and len(history) > MAX_RECENT_TURNS * 2:
         history = history[-(MAX_RECENT_TURNS * 2):]
+
     system_prompt = build_adaptive_system_prompt(user_profile, context.user_data.get("emotional_summary", ""))
+
+    # >>> RAG CALL: decision + inject context BEFORE building payload_messages <<<
+    last_user_text = history[-1]["content"] if history else ""
+    try:
+        if should_use_rag(last_user_text):
+            # theme filtering: we attempt to detect a theme keyword from the user message (simple heuristic)
+            theme_hint = None
+            for t in ["anxiete", "anxious", "anxieux", "stress", "sommeil", "depression", "dépression", "relation", "couple", "travail"]:
+                if t in last_user_text.lower():
+                    theme_hint = t
+                    break
+            rag_data = rag_query(last_user_text, n_results=4, theme_filter=theme_hint)
+            rag_context = rag_data.get("context", "")
+            if rag_context:
+                system_prompt += f"\n\nContexte pertinent (RAG):\n{rag_context}\n"
+    except Exception as e:
+        logger.warning("RAG query failed: %s", e)
+        # continue without RAG
+
     payload_messages = [{"role": "system", "content": system_prompt}] + history
     raw_resp = await asyncio.to_thread(call_model_api_sync, payload_messages, temperature, max_tokens)
     if raw_resp == "FATAL_API_KEY_ERROR":
@@ -361,7 +418,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # light humour
             comment = random.choice([
                 "Ok reçu. On avance, t'inquiète pas, j'ai des blagues en réserve.",
-                "Parfait. Continue, c'est rapide — promis je ne te poserai pas 52 questions.",
+                "Parfait. Continue, c'est rapide  promis je ne te poserai pas 52 questions.",
                 "Merci, noté. Tu tiens le rythme, bravo."
             ])
 
