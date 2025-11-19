@@ -1,8 +1,9 @@
 # ==============================================================================
-# Soph_IA - V72 "Le RAG Cynique"
-# - Architecture : Python/Telegram + RAG (ChromaDB)
-# - Personnalité : RESTAURATION DE L'HUMOUR NOIR / SARCASTIQUE (V68)
-# - Fusion : Utilise le fond sérieux du RAG avec la forme drôle du Prompt.
+# Soph_IA - V69 "Scoring Emotionnel & RAG Actif"
+# - Personnalité : Sophia "Version Relou" (Humour noir/Cynique)
+# - Fonctionnalité : Module de Scoring (7 questions) + Micro-interactions
+# - Intelligence : RAG activé (Mémoire via rag.py)
+# - Sécurité : Détection de détresse (DANGER_KEYWORDS)
 # ==============================================================================
 
 import os
@@ -11,14 +12,15 @@ import json
 import requests
 import asyncio
 import logging
+import random
 import time
 from datetime import datetime
+from typing import Dict, Optional, List
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from dotenv import load_dotenv
-from typing import Dict, List
 
-# --- IMPORT DU MODULE RAG ---
+# --- IMPORT DU MODULE RAG (CRITIQUE) ---
 try:
     from rag import rag_query
     RAG_ENABLED = True
@@ -31,247 +33,399 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger("sophia.v72")
+logger = logging.getLogger("sophia.v69")
 
 load_dotenv()
 
 # -----------------------
-# CONFIGURATION API
+# CONFIG
 # -----------------------
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 MODEL_API_URL = "https://api.together.xyz/v1/chat/completions"
 MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-oss-20b")
 
-MAX_RECENT_TURNS = 3 
+# Behaviour params
+MAX_RECENT_TURNS = 3
+SUMMARY_TRIGGER_TURNS = 8
+SUMMARY_MAX_TOKENS = 120
+
 RESPONSE_TIMEOUT = 70
 MAX_RETRIES = 2
 
-# Filtres de sécurité et d'identité
-IDENTITY_PATTERNS = [r"je suis soph_?ia", r"je m'?appelle soph_?ia", r"je suis une ia"]
+IDENTITY_PATTERNS = [r"je suis soph_?ia", r"je m'?appelle soph_?ia", r"je suis une (?:intelligence artificielle|ia)"]
 
-# Questions de diagnostic (Version Humour / Directe)
-DIAGNOSTIC_QUESTIONS = {
-    "q1_fam": "Question de base : Ton enfance, c'était plutôt 'La Petite Maison dans la Prairie' ou 'Survivor' ? Te sentais-tu écouté ?",
-    "q2_geo": "Ton bunker actuel : Tu vis seul(e) ou tu subis des colocataires/famille ? C'est un refuge ou une zone de guerre ?",
-    "q3_pro": "Dernière torture : Ton job/études. Ça te donne de l'énergie ou ça te donne envie de tout plaquer pour élever des chèvres ?",
+# Diagnostic / Scoring questions (7)
+SCORING_QUESTIONS = [
+    {"id": "anxiety", "q": "Sur une échelle de 1 à 10, à quel point tu te sens anxieux·se ces derniers jours ? (1 = pas du tout, 10 = extrêmement)"},
+    {"id": "stress", "q": "Sur 1–10, quel est ton niveau de stress général en ce moment ?"},
+    {"id": "sleep", "q": "Sur 1–10, à quel point ton sommeil est perturbé/de mauvaise qualité ?"},
+    {"id": "mood", "q": "Sur 1–10, comment évaluerais-tu ton humeur globale (tristesse/dépression) ?"},
+    {"id": "mental_load", "q": "Sur 1–10, quelle est ta charge mentale quotidienne (pensées, responsabilités) ?"},
+    {"id": "control", "q": "Sur 1–10, à quel point tu sens que tu as le contrôle sur ta vie actuelle ? (1 = aucun contrôle, 10 = plein contrôle)"},
+    {"id": "motivation", "q": "Sur 1–10, comment est ton niveau d'énergie / motivation pour faire des choses qui comptent pour toi ?"}
+]
+
+# Weights for each dimension
+SCORING_WEIGHTS = {
+    "anxiety": 20, "stress": 15, "sleep": 15, "mood": 20,
+    "mental_load": 10, "control": 10, "motivation": 10
 }
 
-# -----------------------
-# FILTRE RAG (Le "QUAND")
-# -----------------------
-def should_use_rag(message: str) -> bool:
-    if not message: return False
-    msg = message.lower().strip()
-    
-    # Ignorer le Small Talk
-    if len(msg.split()) < 3 and any(x in msg for x in ['bonjour', 'salut', 'ça va', 'merci', 'ok']):
-        return False
-        
-    # Déclencher sur la longueur ou mots-clés
-    if len(msg) > 30: return True
-    
-    keywords = [
-        "seul", "triste", "peur", "angoisse", "stress", "famille", "travail", 
-        "couple", "amour", "problème", "aider", "conseil", "fatigue", "vide", "dépression"
-    ]
-    if any(k in msg for k in keywords): return True
-        
-    return False
+# Thresholds
+ORIENTATION_THRESHOLDS = {
+    "prevention": 30, "fragile": 60, "psychologist": 80, "severe": 100
+}
+
+# Dangerous phrases
+DANGER_KEYWORDS = [
+    r"\bme suicid(es|er|e)?\b", r"\bje veux mourir\b", r"\bj'ai envie de mourir\b",
+    r"\bfinir ma vie\b", r"\bje vais me tuer\b", r"\bj'ai pensé à me tuer\b",
+    r"\bje vais me faire du mal\b", r"\bje ne veux plus vivre\b"
+]
 
 # -----------------------
-# APPEL API (LLM)
+# UTIL - appel modèle
 # -----------------------
-def call_model_api_sync(messages, temperature=0.85, max_tokens=700):
+def call_model_api_sync(messages: List[Dict], temperature: float = 0.85, max_tokens: int = 700):
     payload = {
         "model": MODEL_NAME,
         "messages": messages,
-        "temperature": temperature, # Haute température pour l'humour
+        "temperature": temperature,
         "max_tokens": max_tokens,
-        "top_p": 0.9,
-        "presence_penalty": 0.6 
+        "top_p": 0.8,
+        "presence_penalty": 0.5,
+        "frequency_penalty": 0.4
     }
     headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}", "Content-Type": "application/json"}
-    
+
     for attempt in range(MAX_RETRIES + 1):
         try:
             r = requests.post(MODEL_API_URL, json=payload, headers=headers, timeout=RESPONSE_TIMEOUT)
-            if r.status_code in (401, 403): return "FATAL_KEY"
+            if r.status_code in (401, 403):
+                logger.critical("API Key Error (401/403). Check TOGETHER_API_KEY validity.")
+                return "FATAL_API_KEY_ERROR"
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"].strip()
+        except requests.exceptions.Timeout:
+            if attempt < MAX_RETRIES:
+                time.sleep(2)
+                continue
+            return None
         except Exception as e:
-            if attempt == MAX_RETRIES: 
-                logger.error(f"API Fail: {e}")
-                return None
-            time.sleep(1)
+            logger.error(f"API Error: %s", e)
+            return None
     return None
 
-# -----------------------------------------------------------------------
-# SYSTEM PROMPT (RESTAURATION PERSONNALITÉ HUMOUR V68 + RAG)
-# -----------------------------------------------------------------------
-def build_robust_system_prompt(user_profile, rag_context=""):
-    user_name = user_profile.get("name") or "l'inconnu(e)"
-    
-    env_info = user_profile.get("geo_info", "Non précisé")
-    socle_info = user_profile.get("socle_info", "Non précisé")
-    
-    # 1. IDENTITÉ (Le retour de Sophia Relou)
-    role = (
-        "Tu es Sophia. Tu es une confidente intime, mais avec un caractère bien trempé."
-        "Ton ton est **direct, décalé, pince-sans-rire et bourré d'humour noir et d'auto-dérision**."
-        "Tu es le seul psy qui rit de tout. Tu tutoies tout le monde. Tu n'es pas là pour pleurer avec l'utilisateur, mais pour le secouer avec affection."
-    )
+# -----------------------
+# PROMPT DYNAMIQUE (V69 Persona)
+# -----------------------
+def build_adaptive_system_prompt(user_profile, emotional_summary, rag_context=""):
+    user_name = user_profile.get("name") or "l'ami(e) sans nom"
+    env_info = user_profile.get("geo_info") or "Non précisé"
+    pro_info = user_profile.get("pro_info") or "Non précisé"
+    socle_info = user_profile.get("socle_info") or "Non précisé"
 
-    # 2. INSTRUCTIONS MIXTES (Humour + RAG)
-    instructions = (
-        "### TES INSTRUCTIONS ###\n"
-        f"1. **Prénom** : Utilise {user_name}, mais n'hésite pas à être familière.\n"
-        "2. **Validation Sarcastique** : Valide l'émotion, mais avec une punchline ou une blague pour dédramatiser.\n"
-        "3. **Le Fond et la Forme** : Si tu reçois des infos du RAG (contexte), utilise le FOND (le conseil intelligent) mais change la FORME (mets-le à ta sauce humoristique/directe).\n"
-        "4. **Anti-Répétition** : Ne dis jamais 'Je suis là pour toi'. Dis plutôt 'Je bouge pas, je suis coincée dans le serveur de toute façon'.\n"
+    # Persona Humour Noir / Relou
+    persona_base = (
+        f"Tu es Sophia, version relou. Tu parles uniquement en français. Ton ton est direct, décalé, pince-sans-rire et d'humour noir. "
+        f"Ton rôle est d'écouter {user_name} et d'apporter un soutien, en dosant humour et sérieux.\n\n"
     )
-
-    # 3. RAG INTELLIGENT
-    rag_section = ""
+    
+    rag_instruction = ""
     if rag_context:
-        rag_section = (
-            f"\n### LA VOIX DE LA RAISON (RAG) ###\n"
-            f"Voici des conseils sérieux tirés de ma mémoire. "
-            f"Ton job : prendre ces conseils sages et les reformuler avec ton style 'Sophia l'humoriste' :\n"
-            f"{rag_context}\n"
-        )
+        rag_instruction = f"\n[CONTEXTE RAG]: Utilise ces infos pour répondre, mais garde ton ton décalé :\n{rag_context}\n"
 
-    context_section = (
-        f"\n### DOSSIER DU PATIENT ###\n"
-        f"- Famille/Enfance: {socle_info}\n"
-        f"- Environnement: {env_info}\n"
+    rules = (
+        "Règles :\n"
+        "- Commence par valider l'émotion exprimée.\n"
+        "- Adapte ton humour : si l'utilisateur présente des signes de détresse, désactive l'humour et reste sérieux.\n"
+        "- Si pas de détresse, tu peux doser une touche d'humour sarcastique entre les propositions.\n"
     )
+    
+    memory = f"\nProfil: {user_name} | Environnement: {env_info} | Profession: {pro_info} | Socle: {socle_info}\n"
+    if emotional_summary:
+        memory += f"\nMémoire émotionnelle: {emotional_summary}\n"
 
-    return f"{role}\n\n{instructions}\n{rag_section}\n{context_section}"
+    return persona_base + rules + rag_instruction + memory
 
 # -----------------------
-# ORCHESTRATION
+# RAG DECISION HELPER
 # -----------------------
-async def chat_with_ai(profile, history, context_updater):
-    user_msg = history[-1]['content']
+def should_use_rag(message: str) -> bool:
+    if not message or len(message.strip()) == 0: return False
+    m = message.lower().strip()
+
+    small_talk = {"ça va", "ca va", "salut", "bonjour", "merci", "ok", "ok!", "quoi de neuf", "yo"}
+    if m in small_talk or (len(m.split()) <= 3 and any(s in m for s in small_talk)):
+        return False
+
+    keywords = [
+        "anx", "stress", "déprim", "suic", "sommeil", "dormir", "insomnie", 
+        "psy", "thérapie", "conseil", "aide", "comment", "pourquoi", 
+        "que faire", "je me sens", "angoiss", "panique", "phobie", "relation", "seul", "triste"
+    ]
+    if any(k in m for k in keywords): return True
+    if len(m) > 40: return True
+    return False
+
+# -----------------------
+# Helpers Scoring
+# -----------------------
+def detect_dangerous_phrases(text: str) -> bool:
+    txt = text.lower()
+    for pat in DANGER_KEYWORDS:
+        if re.search(pat, txt): return True
+    return False
+
+def invert_score(value: int) -> int:
+    return 11 - value
+
+def validate_numeric_response(text: str) -> Optional[int]:
+    text = text.strip()
+    m = re.search(r"\b([1-9]|10)\b", text)
+    if m:
+        val = int(m.group(1))
+        if 1 <= val <= 10: return val
+    return None
+
+def compute_weighted_score(scores: Dict[str, int]) -> float:
+    total = 0.0
+    for key, weight in SCORING_WEIGHTS.items():
+        val = scores.get(key, 5)
+        if key in ("control", "motivation"): val = invert_score(val)
+        normalized = ((val - 1) / 9) * 100
+        total += normalized * (weight / 100.0)
+    return round(total, 1)
+
+def decide_orientation(score: float) -> str:
+    if score <= ORIENTATION_THRESHOLDS["prevention"]: return "coach / sophrologue / prévention"
+    if score <= ORIENTATION_THRESHOLDS["fragile"]: return "coach mental + accompagnement bien-être"
+    if score <= ORIENTATION_THRESHOLDS["psychologist"]: return "psychologue (évaluation plus approfondie recommandée)"
+    return "psychiatre ou service d'urgence (détresse sévère) - orientation urgente requise"
+
+# -----------------------
+# POST-PROCESS
+# -----------------------
+def post_process_response(raw_response):
+    if not raw_response: return "Désolé, je n'arrive pas à formuler ma réponse. Peux-tu reformuler ?"
+    text = raw_response.strip()
+    for pat in IDENTITY_PATTERNS:
+        text = re.sub(pat, "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(I am|I'm)\b", "", text, flags=re.IGNORECASE)
+    text = "\n".join([ln.strip() for ln in text.splitlines() if ln.strip()])
+    
+    if re.search(r"[A-Za-z]{3,}", text) and not re.search(r"[àâéèêîôùûçœ]", text):
+        return "Je suis désolée, je n'ai pas bien formulé cela en français. Peux-tu reformuler ?"
+    
+    if len(text) > 1500:
+        text = text[:1500].rsplit(".", 1)[0] + "."
+    return text
+
+# -----------------------
+# CHAT ORCHESTRATOR (RAG + LLM)
+# -----------------------
+async def chat_with_ai(user_profile: Dict, history: List[Dict], context: ContextTypes.DEFAULT_TYPE, temperature: float = 0.85, max_tokens: int = 700) -> str:
+    if history and len(history) > MAX_RECENT_TURNS * 2:
+        history = history[-(MAX_RECENT_TURNS * 2):]
+
+    last_user_text = history[-1]["content"] if history else ""
     
     # 1. RAG
-    rag_context = ""
-    if RAG_ENABLED and should_use_rag(user_msg):
+    rag_context_str = ""
+    if RAG_ENABLED and should_use_rag(last_user_text):
         try:
-            logger.info(f"🔍 RAG activé pour : {user_msg[:20]}...")
-            rag_result = await asyncio.to_thread(rag_query, user_msg, 2)
-            rag_context = rag_result.get("context", "")
+            logger.info(f"🔍 RAG activé pour : {last_user_text[:20]}...")
+            rag_result = await asyncio.to_thread(rag_query, last_user_text, 3)
+            rag_context_str = rag_result.get("context", "")
         except Exception as e:
-            logger.error(f"RAG Error: {e}")
+            logger.warning(f"RAG query failed: {e}")
 
-    # 2. PROMPT
-    system_prompt = build_robust_system_prompt(profile, rag_context)
+    # 2. Prompt Build (avec le contexte RAG)
+    system_prompt = build_adaptive_system_prompt(user_profile, context.user_data.get("emotional_summary", ""), rag_context=rag_context_str)
+
+    payload_messages = [{"role": "system", "content": system_prompt}] + history
     
-    recent_history = history[-6:] 
-    messages = [{"role": "system", "content": system_prompt}] + recent_history
+    # 3. Call LLM
+    raw_resp = await asyncio.to_thread(call_model_api_sync, payload_messages, temperature, max_tokens)
     
-    # 3. LLM
-    raw = await asyncio.to_thread(call_model_api_sync, messages)
-    
-    if not raw or raw == "FATAL_KEY":
-        return "Bug système. Mon cerveau est parti en vacances. Réessaie."
+    if raw_resp == "FATAL_API_KEY_ERROR":
+        return "ERREUR CRITIQUE : Ma clé API est invalide. Veuillez vérifier TOGETHER_API_KEY."
+    if not raw_resp:
+        return "Désolé, je n'arrive pas à me connecter à mon esprit pour le moment. Réessaie."
         
-    # 4. CLEAN
-    clean = raw
-    for pat in IDENTITY_PATTERNS:
-        clean = re.sub(pat, "", clean, flags=re.IGNORECASE)
-    
-    return clean
+    return post_process_response(raw_resp)
+
+# -----------------------
+# NAME DETECTION
+# -----------------------
+def detect_name_from_text(text):
+    text = text.strip()
+    if len(text.split()) == 1 and text.lower() not in {"bonjour", "salut", "coucou", "hello", "hi"}:
+        return text.capitalize()
+    m = re.search(r"(?:mon nom est|je m'appelle|je me nomme|je suis|moi c'est|on m'appelle)\s*([A-Za-zÀ-ÖØ-öø-ÿ'\- ]+)", text, re.IGNORECASE)
+    if m: return m.group(1).strip().split()[0].capitalize()
+    return None
 
 # -----------------------
 # HANDLERS TELEGRAM
 # -----------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    context.user_data["profile"] = {}
+    context.user_data["profile"] = {"name": None, "geo_info": None, "pro_info": None, "socle_info": None}
     context.user_data["state"] = "awaiting_name"
     context.user_data["history"] = []
+    context.user_data["emotional_summary"] = ""
+    context.user_data["last_bot_reply"] = ""
+    context.user_data["mental_scores"] = {}
+    context.user_data["current_scoring_index"] = 0
     
-    msg = (
-        "Salut l'humain ! 👋 Je suis **Soph_IA**.\n"
-        "Ici c'est ta 'Safe Place' (ça veut dire que je ne balance pas tes secrets à ton ex).\n"
-        "Je suis là pour t'écouter, te vanner un peu, et t'aider à avancer.\n\n"
-        "Allez, on commence les présentations. C'est quoi ton petit nom ?"
+    welcome = (
+        "Salut ! 👋 Je suis SophIA, ton espace d'écoute confidentiel.\n\n"
+        "Tu veux vider ton sac maintenant, ou je peux te poser quelques questions rapides pour mieux t'orienter (ça prend environ 2 minutes) ?\n\n"
+        "Pour commencer, quel est ton prénom ?"
     )
-    await update.message.reply_text(msg, parse_mode='Markdown')
+    await update.message.reply_text(welcome)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_msg = update.message.text.strip()
-    if not user_msg: return
+    user_message = (update.message.text or "").strip()
+    if not user_message: return
 
+    profile = context.user_data.setdefault("profile", {"name": None, "geo_info": None, "pro_info": None, "socle_info": None})
     state = context.user_data.get("state", "awaiting_name")
-    profile = context.user_data.setdefault("profile", {})
     history = context.user_data.setdefault("history", [])
 
-    # --- STATE: AWAITING NAME ---
-    if state == "awaiting_name":
-        name = user_msg.split()[0].capitalize()
-        profile["name"] = name
-        context.user_data["state"] = "awaiting_choice"
-        
+    # DANGER DETECTION
+    if detect_dangerous_phrases(user_message):
+        context.user_data["state"] = "safety_mode"
         await update.message.reply_text(
-            f"Enchantée {name}. 🌿\n\n"
-            "Bon, comment on procède ? Tu veux vider ton sac tout de suite (Mode Freestyle), "
-            "ou tu veux que je te pose mes questions indiscrètes pour mieux te cerner (Mode Psy) ?"
+            "Merci de m'avoir dit cela. Je prends ça très au sérieux. Si tu es en danger immédiat, contacte les services d'urgence locaux maintenant.\n"
+            "Est-ce que tu te sens en sécurité en ce moment ? (réponds oui/non)"
         )
         return
 
-    # --- STATE: CHOICE ---
-    if state == "awaiting_choice":
-        if any(w in user_msg.lower() for w in ["psy", "question", "toi", "vas-y", "guidé"]):
-            context.user_data["state"] = "diag_1"
-            await update.message.reply_text(f"Ok, tu l'auras voulu.\n\n{DIAGNOSTIC_QUESTIONS['q1_fam']}")
+    # === awaiting_name ===
+    if state == "awaiting_name":
+        name_candidate = detect_name_from_text(user_message)
+        if name_candidate:
+            profile["name"] = name_candidate
+            context.user_data["state"] = "awaiting_mode_choice"
+            await update.message.reply_text(
+                f"Yo {profile['name']} ! Enchantée. Tu veux d'abord parler librement, ou je te pose mes 7 questions rapides (score 1–10) pour t'orienter ? (Écris 'parler' ou 'questions')"
+            )
             return
         else:
-            context.user_data["state"] = "chatting"
-            # Continue to chatting logic
-
-    # --- STATE: DIAGNOSTIC ---
-    if state.startswith("diag_"):
-        if state == "diag_1":
-            profile["socle_info"] = user_msg
-            context.user_data["state"] = "diag_2"
-            await update.message.reply_text(f"C'est noté. Passons au décor... {DIAGNOSTIC_QUESTIONS['q2_geo']}")
-            return
-        if state == "diag_2":
-            profile["geo_info"] = user_msg
-            context.user_data["state"] = "diag_3"
-            await update.message.reply_text(f"Intéressant. Dernière torture : {DIAGNOSTIC_QUESTIONS['q3_pro']}")
-            return
-        if state == "diag_3":
-            profile["pro_info"] = user_msg
-            context.user_data["state"] = "chatting"
-            await update.message.reply_text(f"Merci {profile['name']}. J'ai ton dossier complet (ou presque). \n\nMaintenant dis-moi, qu'est-ce qui t'amène vraiment aujourd'hui ?")
+            await update.message.reply_text("S'il te plaît, donne-moi ton prénom ou un surnom — ça rend tout plus simple.")
             return
 
-    # --- STATE: CHATTING ---
-    history.append({"role": "user", "content": user_msg})
-    
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    
-    response = await chat_with_ai(profile, history, context)
-    
-    history.append({"role": "assistant", "content": response})
-    if len(history) > 20: context.user_data["history"] = history[-20:]
+    # === safety_mode ===
+    if state == "safety_mode":
+        resp = user_message.lower()
+        if resp.startswith("oui"):
+            context.user_data["state"] = "awaiting_mode_choice"
+            await update.message.reply_text("D'accord, merci. On continue prudemment. Tu veux parler librement ou que je te pose les questions rapides ?")
+            return
+        else:
+            await update.message.reply_text(
+                "Je suis vraiment désolée. Appelle les urgences locales maintenant. Si tu veux, je peux te proposer des numéros d'aides."
+            )
+            return
+
+    # === awaiting_mode_choice ===
+    if state == "awaiting_mode_choice":
+        resp = user_message.lower()
+        if any(k in resp for k in ["parler", "écoute", "libre", "je parle"]):
+            context.user_data["state"] = "chatting"
+            history.append({"role": "user", "content": user_message, "ts": datetime.utcnow().isoformat()})
+            response = await chat_with_ai(profile, history, context)
+            history.append({"role": "assistant", "content": response, "ts": datetime.utcnow().isoformat()})
+            context.user_data["history"] = history
+            await update.message.reply_text(response)
+            return
         
-    await update.message.reply_text(response)
+        if any(k in resp for k in ["question", "questions", "q", "score"]):
+            context.user_data["state"] = "scoring_q"
+            context.user_data["current_scoring_index"] = 0
+            context.user_data["mental_scores"] = {}
+            await update.message.reply_text(f"D'accord {profile['name']}, petit test rapide. Réponds par un chiffre 1–10.")
+            await asyncio.sleep(0.5)
+            await update.message.reply_text(SCORING_QUESTIONS[0]["q"])
+            return
+        
+        await update.message.reply_text("Je n'ai pas compris — écris 'parler' pour discuter ou 'questions' pour le test.")
+        return
+
+    # === scoring flow ===
+    if state == "scoring_q":
+        idx = context.user_data.get("current_scoring_index", 0)
+        num = validate_numeric_response(user_message)
+        if num is None:
+            await update.message.reply_text("Merci d'indiquer un chiffre entre 1 et 10.")
+            return
+
+        key = SCORING_QUESTIONS[idx]["id"]
+        context.user_data["mental_scores"][key] = num
+
+        # Micro-comment
+        interim_high = (key in ("anxiety", "stress", "mood") and num >= 9)
+        if interim_high:
+            comment = f"Je vois {profile['name']}... c'est intense. On continue."
+        else:
+            comment = random.choice(["Ok reçu.", "C'est noté.", "Merci, on continue."])
+        await update.message.reply_text(comment)
+
+        idx += 1
+        context.user_data["current_scoring_index"] = idx
+
+        if idx < len(SCORING_QUESTIONS):
+            await asyncio.sleep(0.5)
+            await update.message.reply_text(SCORING_QUESTIONS[idx]["q"])
+            return
+        else:
+            scores = context.user_data.get("mental_scores", {})
+            final_score = compute_weighted_score(scores)
+            orientation = decide_orientation(final_score)
+            
+            disable_humour = final_score >= 81
+            if disable_humour:
+                summary = f"Ton score est {final_score}/100. Détresse élevée. Je recommande : {orientation}."
+            else:
+                summary = f"Score : {final_score}/100. Interprétation : {orientation}."
+            
+            context.user_data["last_score"] = {"score": final_score, "orientation": orientation}
+            context.user_data["state"] = "chatting"
+            await update.message.reply_text(summary)
+            await asyncio.sleep(0.5)
+            await update.message.reply_text("Tu veux qu'on en parle ou qu'on cherche une solution ?")
+            return
+
+    # === chatting ===
+    if state == "chatting":
+        history.append({"role": "user", "content": user_message, "ts": datetime.utcnow().isoformat()})
+        
+        # RAG et LLM appelés ici
+        response = await chat_with_ai(profile, history, context)
+        
+        history.append({"role": "assistant", "content": response, "ts": datetime.utcnow().isoformat()})
+        context.user_data["history"] = history
+        await update.message.reply_text(response)
+        return
 
 async def error_handler(update, context):
-    logger.error(f"Update error: {context.error}")
+    logger.exception("Exception: %s", context.error)
 
 def main():
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_error_handler(error_handler)
-    print("Soph_IA V72 (RAG + Humour) is running...")
-    app.run_polling()
+    if not TELEGRAM_BOT_TOKEN or not TOGETHER_API_KEY:
+        logger.critical("Missing ENV variables.")
+        return
+
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_error_handler(error_handler)
+
+    logger.info("Soph_IA V69+RAG starting...")
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
