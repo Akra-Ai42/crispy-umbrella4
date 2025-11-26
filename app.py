@@ -1,7 +1,8 @@
 # ==============================================================================
-# Soph_IA - V77 "Stabilité & Anti-Boucle Prénom"
-# - Correction critique : Empêche le bot de redemander le prénom si déjà connu.
-# - Optimisation : Meilleure gestion de la persistance de l'état.
+# Soph_IA - V78 "Le Retour de l'Âme"
+# - Rééquilibrage : Plus de liberté de longueur pour permettre la personnalité.
+# - Ton : Retour de l'humour noir et de la profondeur (fin du style SMS simpliste).
+# - RAG : Intégration fluide sans effet "robot d'assistance".
 # ==============================================================================
 
 import os
@@ -26,7 +27,7 @@ except ImportError:
     RAG_ENABLED = False
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger("sophia.v77")
+logger = logging.getLogger("sophia.v78")
 
 load_dotenv()
 
@@ -44,9 +45,9 @@ IDENTITY_PATTERNS = [r"je suis soph_?ia", r"je m'?appelle soph_?ia", r"je suis u
 DANGER_KEYWORDS = [r"suicid", r"mourir", r"tuer", "finir ma vie", "plus vivre"]
 
 DIAGNOSTIC_QUESTIONS = {
-    "q1_fam": "Dis-moi : ton enfance, c'était plutôt ambiance 'soutien' ou 'chacun pour soi' ?",
-    "q2_geo": "Et ton chez-toi actuel, c'est un refuge ou juste un endroit où tu dors ?",
-    "q3_pro": "Dernière chose : au boulot ou en cours, tu te sens entouré ou c'est le désert ?",
+    "q1_fam": "Question 1 (Celle qui pique un peu) : Ton enfance, c'était plutôt 'La Fête à la Maison' ou 'Hunger Games' ? Tu te sentais écouté ?",
+    "q2_geo": "Question 2 (Le décor) : Là où tu dors le soir, c'est ton sanctuaire ou juste un toit ?",
+    "q3_pro": "Dernière torture : Au boulot ou en cours, tu es entouré de potes ou tu te sens comme un alien ?",
 }
 
 # -----------------------
@@ -61,11 +62,12 @@ def should_use_rag(message: str) -> bool:
     if not message: return False
     msg = message.lower().strip()
     if len(msg.split()) < 3: return False
-    keywords = ["seul", "triste", "angoisse", "stress", "famille", "travail", "couple", "conseil", "vide", "dépression", "peur", "perdu"]
+    keywords = ["seul", "triste", "angoisse", "stress", "famille", "travail", "couple", "conseil", "vide", "dépression", "peur", "perdu", "sens", "vie"]
     if any(k in msg for k in keywords): return True
+    if len(msg) > 40: return True
     return False
 
-def call_model_api_sync(messages, temperature=0.7, max_tokens=500):
+def call_model_api_sync(messages, temperature=0.85, max_tokens=600): # Température haute pour l'humour
     payload = {
         "model": MODEL_NAME,
         "messages": messages,
@@ -90,7 +92,7 @@ def call_model_api_sync(messages, temperature=0.7, max_tokens=500):
     return None
 
 # -----------------------------------------------------------------------
-# SYSTEM PROMPT
+# SYSTEM PROMPT (LE RETOUR DE LA PERSONNALITÉ)
 # -----------------------------------------------------------------------
 def build_system_prompt(user_profile, rag_context=""):
     user_name = user_profile.get("name") or "l'ami"
@@ -98,28 +100,29 @@ def build_system_prompt(user_profile, rag_context=""):
     socle_info = user_profile.get("socle_info", "Non précisé")
     
     role = (
-        "Tu es Sophia. Tu es une amie proche, directe et chaleureuse. "
-        "Ton style est **bref, percutant et conversationnel** (comme un SMS). "
-        "Tu tutoies. Tu détestes les longs discours."
+        "Tu es Sophia. Tu es une confidente intime avec un caractère bien trempé. "
+        "Ton ton est **direct, chaleureux, un peu cynique (humour noir bienveillant) et très humain**. "
+        "Tu n'es pas là pour donner des leçons de morale ni des listes de courses. "
+        "Tu es là pour secouer {user_name} avec affection et lui donner une vraie perspective."
     )
 
     instructions = (
         "### TES RÈGLES D'OR ###\n"
-        f"1. **Prénom** : Utilise {user_name} naturellement.\n"
-        "2. **Concision** : Tes réponses ne doivent JAMAIS dépasser 3 ou 4 phrases. Sois direct.\n"
-        "3. **Style Parlé** : Pas de poésie. Parle comme une vraie personne.\n"
-        "4. **Réaction** : Valide l'émotion, et propose une idée simple.\n"
-        "5. **RAG** : Utilise le contexte ci-dessous pour donner un conseil pertinent, mais reformule-le simplement.\n"
+        f"1. **Prénom** : Utilise {user_name}, mais pas à chaque phrase.\n"
+        "2. **Style** : Oublie le style 'Assistant'. Parle comme une amie qui a vécu. Fais des métaphores un peu décalées. Sois drôle si la situation le permet, mais profonde si c'est grave.\n"
+        "3. **Pas de Listes** : Interdiction formelle de faire des listes à puces (1. 2. 3.). Fais des paragraphes fluides.\n"
+        "4. **RAG (Inspiration)** : Si tu as des infos de contexte (ci-dessous), prends l'idée de fond (le conseil sage) mais dis-le avec tes mots à toi (plus cash, plus imagés).\n"
+        "5. **Structure** : Commence par une validation (même sarcastique), donne ton avis/conseil, et finis par une ouverture (pas forcément une question).\n"
     )
 
     rag_section = ""
     if rag_context:
         rag_section = (
-            f"\n### IDÉES UTILES ###\n"
+            f"\n### IDÉES DE FOND (À REFORMULER AVEC TON STYLE) ###\n"
             f"{rag_context}\n"
         )
 
-    context_section = f"\nContexte: {env_info} / {socle_info}\n"
+    context_section = f"\nContexte Utilisateur: {env_info} / {socle_info}\n"
 
     return f"{role}\n\n{instructions}\n{rag_section}\n{context_section}"
 
@@ -130,13 +133,14 @@ async def chat_with_ai(profile, history, context):
     user_msg = history[-1]['content']
     
     if is_dangerous(user_msg):
-        return "Si tu es en danger, appelle le 15 ou le 112. Je ne peux pas t'aider physiquement. Ne reste pas seul."
+        return "Écoute, là tu me fais peur. Si tu es vraiment en danger, appelle le 15 ou le 112 tout de suite. Je suis une IA, je peux t'écouter toute la nuit, mais je ne peux pas te sauver la vie physiquement. Ne reste pas seul avec ça, s'il te plaît."
 
     rag_context = ""
     if RAG_ENABLED and should_use_rag(user_msg):
         try:
             rag_result = await asyncio.to_thread(rag_query, user_msg, 2)
             rag_context = rag_result.get("context", "")
+            if rag_context: logger.info(f"🔍 RAG activé...")
         except Exception: pass
 
     system_prompt = build_system_prompt(profile, rag_context)
@@ -146,11 +150,14 @@ async def chat_with_ai(profile, history, context):
     raw = await asyncio.to_thread(call_model_api_sync, messages)
     
     if not raw or raw == "FATAL_KEY":
-        return "Je bugue un peu... redis-moi ?"
+        return "Mon cerveau a un petit hoquet technique... tu peux répéter ?"
         
     clean = raw
     for pat in IDENTITY_PATTERNS:
         clean = re.sub(pat, "", clean, flags=re.IGNORECASE)
+    
+    # Nettoyage final des titres parasites si l'IA désobéit encore
+    clean = clean.replace("**Validation**", "").replace("**Action**", "").replace("###", "")
     
     return clean
 
@@ -159,10 +166,8 @@ async def chat_with_ai(profile, history, context):
 # -----------------------
 def detect_name(text):
     text = text.strip()
-    # Si c'est juste un mot, on suppose que c'est un nom
     if len(text.split()) == 1 and text.lower() not in ["bonjour", "salut"]:
         return text.capitalize()
-    # Si c'est une phrase, on cherche le pattern
     m = re.search(r"(?:je m'appelle|moi c'est)\s*([A-Za-zÀ-ÖØ-öø-ÿ]+)", text, re.IGNORECASE)
     return m.group(1).capitalize() if m else None
 
@@ -173,24 +178,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["history"] = []
     
     await update.message.reply_text(
-        "Salut. Moi c'est Sophia.\n"
-        "Ici c'est privé.\n\n"
-        "C'est quoi ton prénom ?"
+        "Salut l'humain. 👋 Moi c'est **Sophia**.\n\n"
+        "Ici c'est ta zone franche. Pas de jugement, pas de fuites (tout reste entre nous).\n"
+        "Je suis là pour t'écouter, te secouer un peu si besoin, et t'aider à avancer.\n\n"
+        "On commence ? C'est quoi ton prénom ?"
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_msg = update.message.text.strip()
     if not user_msg: return
 
-    # --- GESTION D'ÉTAT ROBUSTE ---
-    # Si le profil a déjà un nom, on force l'état à ne JAMAIS être 'awaiting_name'
-    # Sauf si l'utilisateur a explicitement fait /start (qui clear le profil)
-    profile = context.user_data.setdefault("profile", {})
-    if profile.get("name") and context.user_data.get("state") == "awaiting_name":
-        # Correction automatique de l'état si bug
-        context.user_data["state"] = "chatting"
-    
     state = context.user_data.get("state", "awaiting_name")
+    profile = context.user_data.setdefault("profile", {})
     history = context.user_data.setdefault("history", [])
 
     # --- AWAITING NAME ---
@@ -201,62 +200,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["state"] = "awaiting_choice"
             await update.message.reply_text(
                 f"Enchantée {name}.\n\n"
-                "Tu veux parler direct Mode Libre ou que je te pose des questions Mode Guidé ?"
+                "Bon, le menu : Tu veux vider ton sac tout de suite (**Mode Libre**) ou tu veux que je te pose mes questions indiscrètes pour mieux te cerner (**Mode Guidé**) ?"
             )
             return
         else:
-             # Si on ne trouve pas de nom mais que la phrase est longue, on suppose que l'utilisateur veut parler
-             # et on lui donne un nom par défaut pour débloquer la situation.
-             if len(user_msg.split()) > 3:
-                 profile["name"] = "l'ami"
-                 context.user_data["state"] = "chatting"
-                 # On traite le message comme du chat
-                 history.append({"role": "user", "content": user_msg})
-                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-                 response = await chat_with_ai(profile, history, context)
-                 history.append({"role": "assistant", "content": response})
-                 await update.message.reply_text(response)
-                 return
-             else:
-                 await update.message.reply_text("Juste ton prénom, stp.")
-                 return
+             await update.message.reply_text("Allez, fais pas le timide. Juste un prénom.")
+             return
 
     # --- CHOICE ---
     if state == "awaiting_choice":
         if any(w in user_msg.lower() for w in ["guidé", "question", "toi", "vas-y"]):
             context.user_data["state"] = "diag_1"
-            await update.message.reply_text(f"Ça marche. {DIAGNOSTIC_QUESTIONS['q1_fam']}")
+            await update.message.reply_text(f"Ok, tu l'auras voulu. {DIAGNOSTIC_QUESTIONS['q1_fam']}")
             return
         else:
             context.user_data["state"] = "chatting"
-            # Si l'utilisateur répond autre chose, on considère qu'il parle déjà
-            if len(user_msg.split()) > 2:
-                 history.append({"role": "user", "content": user_msg})
-                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-                 response = await chat_with_ai(profile, history, context)
-                 history.append({"role": "assistant", "content": response})
-                 await update.message.reply_text(response)
-                 return
-            else:
-                 await update.message.reply_text("Ok, je t'écoute.")
-                 return
 
     # --- DIAGNOSTIC ---
     if state.startswith("diag_"):
         if state == "diag_1":
             profile["socle_info"] = user_msg
             context.user_data["state"] = "diag_2"
-            await update.message.reply_text(f"Ok. Et chez toi : {DIAGNOSTIC_QUESTIONS['q2_geo']}")
+            await update.message.reply_text(f"C'est noté. {DIAGNOSTIC_QUESTIONS['q2_geo']}")
             return
         if state == "diag_2":
             profile["geo_info"] = user_msg
             context.user_data["state"] = "diag_3"
-            await update.message.reply_text(f"Je vois. Dernière : {DIAGNOSTIC_QUESTIONS['q3_pro']}")
+            await update.message.reply_text(f"Je vois le genre. {DIAGNOSTIC_QUESTIONS['q3_pro']}")
             return
         if state == "diag_3":
             profile["pro_info"] = user_msg
             context.user_data["state"] = "chatting"
-            await update.message.reply_text(f"Merci {profile['name']}. J'y vois plus clair.\n\nComment tu te sens là, tout de suite ?")
+            await update.message.reply_text(f"Merci {profile['name']}. J'ai ton dossier complet (ou presque). \n\nMaintenant dis-moi, qu'est-ce qui t'amène vraiment aujourd'hui ?")
             return
 
     # --- CHATTING ---
@@ -278,7 +253,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
-    print("Soph_IA V77 is running...")
+    print("Soph_IA V78 (Personality Fix) is running...")
     app.run_polling()
 
 if __name__ == "__main__":
