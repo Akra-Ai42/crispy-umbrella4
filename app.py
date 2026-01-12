@@ -1,6 +1,4 @@
-# app.py (version mise à jour pour RAG prefetch + protocole guidé)
-# ==============================================================================
-
+# app.py (V82 - Partie 1/2)
 import os
 import re
 import requests
@@ -18,13 +16,13 @@ from typing import Dict, List
 try:
     from rag import rag_query
     RAG_ENABLED = True
-    print("✅ [INIT] Module RAG chargé.")
+    print("✅ [INIT] Module RAG chargé (Support Redflags & Souffrance).")
 except Exception as e:
     print(f"⚠️ [INIT] Module RAG non trouvé: {e}")
     RAG_ENABLED = False
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger("sophia.v79")
+logger = logging.getLogger("sophia.v82")
 
 load_dotenv()
 
@@ -32,25 +30,23 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 MODEL_API_URL = "https://api.together.xyz/v1/chat/completions"
+# [CORRECTION] Modèle stable
 MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-oss-20b")
 
-MAX_RECENT_TURNS = 3
-RESPONSE_TIMEOUT = 70
+MAX_RECENT_TURNS = 10
+RESPONSE_TIMEOUT = 30
 MAX_RETRIES = 2
 
 IDENTITY_PATTERNS = [r"je suis soph_?ia", r"je m'?appelle soph_?ia", r"je suis une ia"]
-DANGER_KEYWORDS = [r"suicid", r"mourir", r"tuer", "finir ma vie", "plus vivre"]
+DANGER_KEYWORDS = [r"suicid", r"mourir", r"tuer", "finir ma vie", "plus vivre", "pendre", "sauter"]
 
-# PROTOCOLE GUIDÉ (les questions sont compatibles avec ta version V79)
+# PROTOCOLE GUIDÉ (MODERNE)
 DIAGNOSTIC_QUESTIONS = {
-    "q1_fam": "Question 1 (Celle qui pique) : Ton enfance, c'était plutôt 'La Fête à la Maison' ou 'Hunger Games' ? Tu te sentais écouté ?",
-    "q2_geo": "Question 2 (Le décor) : Là où tu dors le soir, c'est ton sanctuaire ou juste un toit ?",
-    "q3_pro": "Dernière torture : Au boulot ou en cours, tu es entouré de potes ou tu te sens comme un alien ?",
+    "q1_etat": "Ok, on fait un scan rapide. Sur une échelle de batterie mentale, si 0 c'est 'Zombie complet' et 10 'Prêt à conquérir le monde', tu te situes où là tout de suite ? Et qu'est-ce qui consomme le plus ton énergie ?",
+    "q2_liens": "Je note le niveau d'énergie. Maintenant, regarde autour de toi : quand ça tangue, est-ce que tu as une 'main' à attraper (ami, famille, partenaire) ou est-ce que tu gères tout en mode loup solitaire ?",
+    "q3_pivot": "Dernière chose pour que je puisse vraiment t'aider : si tu avais une baguette magique pour changer UN seul truc dans ta situation ce soir, ce serait quoi ?",
 }
 
-# -----------------------
-# UTILS
-# -----------------------
 def is_dangerous(text):
     for pat in DANGER_KEYWORDS:
         if re.search(pat, text.lower()): return True
@@ -59,26 +55,26 @@ def is_dangerous(text):
 def should_use_rag(message: str) -> bool:
     if not message: return False
     msg = message.lower().strip()
-    if len(msg.split()) < 3 and len(msg) < 15:
-        print(f"🚫 [RAG SKIP] Message trop court : '{msg}'")
-        return False
-    keywords = ["seul", "triste", "angoisse", "stress", "famille", "travail", "couple", "conseil", "vide", "dépression", "peur", "perdu", "sens", "vie", "mal", "dormir", "fatigue", "boss", "patron"]
-    if any(k in msg for k in keywords):
-        print(f"✅ [RAG TRIGGER] Mot-clé trouvé dans : '{msg}'")
-        return True
-    if len(msg) > 25:
-        print(f"✅ [RAG TRIGGER] Message long (>25 chars).")
-        return True
+    if len(msg.split()) < 3 and len(msg) < 12: return False
+
+    deep_triggers = [
+        "triste", "seul", "vide", "peur", "angoisse", "stress", "colère", "haine", 
+        "honte", "fatigue", "bout", "marre", "pleur", "mal", "douleur", "panique", 
+        "joie", "espoir", "perdu", "doute", "famille", "père", "mère", "parent", 
+        "ami", "pote", "copain", "copine", "couple", "ex", "relation", "solitude", 
+        "rejet", "abandon", "trahison", "confiance", "travail", "boulot", "étude", 
+        "école", "argent", "avenir", "sens", "rien", "dormir", "nuit", "journée", 
+        "problème", "solution", "conseil", "avis", "choix", "décision"
+    ]
+    
+    if any(trigger in msg for trigger in deep_triggers): return True
+    if len(msg.split()) >= 6: return True
     return False
 
-def call_model_api_sync(messages, temperature=0.85, max_tokens=500):
+def call_model_api_sync(messages, temperature=0.75, max_tokens=450):
     payload = {
-        "model": MODEL_NAME,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "top_p": 0.9,
-        "presence_penalty": 0.6
+        "model": MODEL_NAME, "messages": messages, "temperature": temperature,
+        "max_tokens": max_tokens, "top_p": 0.9, "repetition_penalty": 1.1
     }
     headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}", "Content-Type": "application/json"}
 
@@ -88,94 +84,65 @@ def call_model_api_sync(messages, temperature=0.85, max_tokens=500):
             if r.status_code in (401, 403): return "FATAL_KEY"
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            if attempt == MAX_RETRIES:
-                logger.error(f"API Fail: {e}")
-                return None
+        except Exception:
+            if attempt == MAX_RETRIES: return None
             time.sleep(1)
     return None
 
-# -----------------------------------------------------------------------
-# SYSTEM PROMPT (CONCISION FORCÉE)
-# -----------------------------------------------------------------------
 def build_system_prompt(user_profile, rag_context=""):
     user_name = user_profile.get("name") or "l'ami"
-    env_info = user_profile.get("geo_info", "Non précisé")
-    socle_info = user_profile.get("socle_info", "Non précisé")
-
-    role = (
-        "Tu es Sophia. Une confidente intime avec du caractère. "
-        "Ton ton est direct, chaleureux, cynique-bienveillant."
-    )
-
+    etat_esprit = user_profile.get("etat_esprit", "Non précisé")
+    entourage = user_profile.get("entourage", "Non précisé")
+    besoin_pivot = user_profile.get("besoin_pivot", "Non précisé")
+    
+    role = "Tu es Sophia, la 'Confidente de Poche'. Ni psy clinique, ni robot froid. Tu es une présence lucide, apaisante et expérimentée."
     instructions = (
-        "### TES RÈGLES ABSOLUES ###\n"
-        f"1. Prénom : utilise {user_name} par moments.\n"
-        "2. CONCISION EXTRÊME : Max 2 paragraphes. Va droit au but.\n"
-        "3. Style : naturel, clair.\n"
-        "4. RAG : si tu as du contexte, utilise-le comme inspiration et reformule sous forme de conseil clair.\n"
-        "5. Structure : validation + conseil + ouverture.\n"
+        "### TES DIRECTIVES ###\n"
+        f"1. Tonalité : Parle à {user_name} naturellement.\n"
+        "2. Écoute Active : Valide l'émotion avant de conseiller.\n"
+        "3. UTILISATION DU RAG : Les textes ci-dessous sont des CAS SIMILAIRES. Regarde l'INTENSITÉ (souffrance) et les REDFLAGS.\n"
+        "4. SÉCURITÉ : Risque vital = renvoie 15 ou 3114.\n"
     )
-
-    rag_section = ""
-    if rag_context:
-        rag_section = f"\n### SOURCE RAG ###\n{rag_context}\n"
-
-    context_section = f"\nContexte utilisateur: {env_info} / {socle_info}\n"
+    rag_section = f"\n### 🧠 MÉMOIRE EXPÉRIENTIELLE ###\n{rag_context}\n" if rag_context else ""
+    context_section = f"\n### PROFIL ###\n- État: {etat_esprit}\n- Soutien: {entourage}\n- Besoin: {besoin_pivot}\n"
     return f"{role}\n\n{instructions}\n{rag_section}\n{context_section}"
 
-# -----------------------
-# ORCHESTRATION
-# -----------------------
 async def chat_with_ai(profile, history, context):
     user_msg = history[-1]['content']
     if is_dangerous(user_msg):
-        return "Écoute, là tu me fais peur. Si tu es en danger, appelle le 15 ou le 112. Je ne peux pas t'aider physiquement. Ne reste pas seul."
+        return "Je t'écoute et je sens que c'est très lourd. Mais je suis une IA. S'il te plaît, ne reste pas seul(e). Appelle le **3114** ou le **15**."
 
-    # 1) If prefetch exists (from end of diagnostic), use it and clear it.
     rag_context = ""
     prefetch = context.user_data.get("rag_prefetch")
     if prefetch:
         rag_context = prefetch
-        # consume prefetch once
-        context.user_data["rag_prefetch"] = None
-        print(f"🔎 [RAG_PREFETCH] Using preloaded context ({len(rag_context)} chars).")
-    else:
-        # 2) otherwise perform usual RAG if triggered
-        if RAG_ENABLED and should_use_rag(user_msg):
-            try:
-                print(f"🔍 [RAG] Querying for: {user_msg[:40]}...")
-                result = await asyncio.to_thread(rag_query, user_msg, 3)
-                rag_context = result.get("context", "") or ""
-                if rag_context:
-                    print(f"✅ [RAG] Found context ({len(rag_context)} chars).")
-                else:
-                    print("⚠️ [RAG] No matching context.")
-            except Exception as e:
-                print(f"❌ [RAG] query error: {e}")
+        context.user_data["rag_prefetch"] = None 
+    elif RAG_ENABLED and should_use_rag(user_msg):
+        try:
+            result = await asyncio.to_thread(rag_query, user_msg, 2)
+            rag_context = result.get("context", "")
+        except Exception: pass
 
     system_prompt = build_system_prompt(profile, rag_context)
     recent_history = history[-6:]
     messages = [{"role": "system", "content": system_prompt}] + recent_history
 
     raw = await asyncio.to_thread(call_model_api_sync, messages)
-    if not raw or raw == "FATAL_KEY":
-        return "Mon cerveau a un petit hoquet... tu peux répéter ?"
+    if not raw or raw == "FATAL_KEY": return "Je t'ai perdu une seconde... tu peux répéter ?"
 
     clean = raw
-    for pat in IDENTITY_PATTERNS:
-        clean = re.sub(pat, "", clean, flags=re.IGNORECASE)
-    clean = clean.replace("**Validation**", "").replace("###", "")
+    for pat in IDENTITY_PATTERNS: clean = re.sub(pat, "", clean, flags=re.IGNORECASE)
     return clean
+# ... SUITE DU FICHIER app.py (Partie 2) ...
 
 # -----------------------
-# HANDLERS
+# HANDLERS (UX ORGANIQUE)
 # -----------------------
 def detect_name(text):
     text = text.strip()
-    if len(text.split()) == 1 and text.lower() not in ["bonjour", "salut"]:
+    if len(text.split()) == 1 and text.lower() not in ["bonjour", "salut", "hello", "yo"]:
         return text.capitalize()
-    m = re.search(r"(?:je m'appelle|moi c'est)\s*([A-Za-zÀ-ÖØ-öø-ÿ]+)", text, re.IGNORECASE)
+    m = re.search(r"(?:je m'appelle|moi c'est|prenom est)\s*([A-Za-zÀ-ÖØ-öø-ÿ]+)", text, re.IGNORECASE)
     return m.group(1).capitalize() if m else None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -183,83 +150,84 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["profile"] = {}
     context.user_data["state"] = "awaiting_name"
     context.user_data["history"] = []
-    context.user_data["rag_prefetch"] = None
-
+    
     await update.message.reply_text(
-        "Salut. Je suis Sophia.\n\nZone franche ici. Pas de jugement, pas de fuites.\nC'est quoi ton prénom ?"
+        "Bonjour. Je suis Sophia.\n\n"
+        "Ici, c'est ta bulle. Pas de jugement, juste de l'écoute.\n"
+        "On commence par les présentations ? C'est quoi ton prénom ?"
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_msg = update.message.text.strip()
-    if not user_msg:
-        return
+    if not user_msg: return
 
     state = context.user_data.get("state", "awaiting_name")
     profile = context.user_data.setdefault("profile", {})
     history = context.user_data.setdefault("history", [])
 
-    # --- AWAITING NAME ---
+    # ÉTAPE 1 : LE NOM
     if state == "awaiting_name":
         name = detect_name(user_msg)
         if name:
             profile["name"] = name
             context.user_data["state"] = "awaiting_choice"
             await update.message.reply_text(
-                f"Enchantée {name}.\n\nMenu : Vider ton sac (Libre) ou réponses guidées (Guidé) ?"
+                f"Enchantée {name}. \n\n"
+                "Je suis là pour t'écouter. Tu veux me raconter ce qui t'arrive directement, "
+                "ou tu préfères que je te pose quelques questions pour t'aider à y voir plus clair ?"
             )
             return
         else:
-            await update.message.reply_text("Allez, juste un prénom.")
+            profile["name"] = "l'ami"
+            context.user_data["state"] = "awaiting_choice"
+            await update.message.reply_text(
+                "Ça marche, restons discrets. \n\n"
+                "Dis-moi : tu veux vider ton sac tout de suite, ou tu préfères que je te guide avec des questions ?"
+            )
             return
 
-    # --- CHOICE ---
+    # ÉTAPE 2 : LE CHOIX IMPLICITE
     if state == "awaiting_choice":
-        if any(w in user_msg.lower() for w in ["guidé", "question", "toi", "vas-y"]):
+        msg_lower = user_msg.lower()
+        if any(w in msg_lower for w in ["question", "guide", "guider", "pose", "interroge", "vas-y", "aide-moi"]):
             context.user_data["state"] = "diag_1"
-            await update.message.reply_text(f"Ok, c'est parti. {DIAGNOSTIC_QUESTIONS['q1_fam']}")
+            await update.message.reply_text(f"C'est parti. {DIAGNOSTIC_QUESTIONS['q1_etat']}")
             return
-        else:
-            context.user_data["state"] = "chatting"
+        
+        context.user_data["state"] = "chatting"
+        if len(user_msg.split()) < 5:
+            await update.message.reply_text("Je t'écoute. Prends ton temps, je suis là.")
+            return
 
-    # --- DIAGNOSTIC ---
+    # ÉTAPE 3 : LE DIAGNOSTIC (Nouvelles questions)
     if state.startswith("diag_"):
         if state == "diag_1":
-            profile["socle_info"] = user_msg
+            profile["etat_esprit"] = user_msg
             context.user_data["state"] = "diag_2"
-            await update.message.reply_text(f"Noté. {DIAGNOSTIC_QUESTIONS['q2_geo']}")
+            await update.message.reply_text(f"{DIAGNOSTIC_QUESTIONS['q2_liens']}")
             return
         if state == "diag_2":
-            profile["geo_info"] = user_msg
+            profile["entourage"] = user_msg
             context.user_data["state"] = "diag_3"
-            await update.message.reply_text(f"Je vois. {DIAGNOSTIC_QUESTIONS['q3_pro']}")
+            await update.message.reply_text(f"{DIAGNOSTIC_QUESTIONS['q3_pivot']}")
             return
         if state == "diag_3":
-            profile["pro_info"] = user_msg
-            # --- END OF DIAGNOSTIC: PREFETCH RAG ---
+            profile["besoin_pivot"] = user_msg
             context.user_data["state"] = "chatting"
-            # build a compact query from profile to prefetch matching cases
-            prefetch_query = " ".join([
-                profile.get("socle_info", ""),
-                profile.get("geo_info", ""),
-                profile.get("pro_info", "")
-            ]).strip()
-            if RAG_ENABLED and prefetch_query:
+            
+            # Prefetch RAG ciblé
+            prefetch_query = f"État: {profile.get('etat_esprit')} Besoin: {profile.get('besoin_pivot')} psychologie"
+            if RAG_ENABLED:
                 try:
-                    print("🔎 [RAG_PREFETCH] prefetching using profile snapshot...")
-                    res = await asyncio.to_thread(rag_query, prefetch_query, 3)
+                    res = await asyncio.to_thread(rag_query, prefetch_query, 2)
                     pref = res.get("context", "")
-                    if pref:
-                        context.user_data["rag_prefetch"] = pref
-                        print(f"✅ [RAG_PREFETCH] Stored ({len(pref)} chars).")
-                    else:
-                        print("⚠️ [RAG_PREFETCH] Nothing returned.")
-                except Exception as e:
-                    print(f"❌ [RAG_PREFETCH] Error: {e}")
-                    context.user_data["rag_prefetch"] = None
-            await update.message.reply_text(f"Merci {profile['name']}. J'ai le dossier. \n\nMaintenant, dis-moi ce qui t'amène vraiment.")
+                    if pref: context.user_data["rag_prefetch"] = pref
+                except Exception: pass
+            
+            await update.message.reply_text(f"Merci {profile['name']}. C'est très clair. \n\nJe t'écoute, dis-moi ce qui t'amène aujourd'hui, on va regarder ça ensemble.")
             return
 
-    # --- CHATTING ---
+    # ÉTAPE 4 : CONVERSATION
     history.append({"role": "user", "content": user_msg})
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     response = await chat_with_ai(profile, history, context)
@@ -269,14 +237,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(response)
 
 async def error_handler(update, context):
-    logger.error(f"Update error: {context.error}")
+    logger.error(f"Erreur Update: {context.error}")
 
 def main():
+    if not TELEGRAM_BOT_TOKEN:
+        print("❌ ERREUR : TELEGRAM_BOT_TOKEN manquant dans .env")
+        return
+
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
-    print("Soph_IA V79 (RAG Sensible) is running...")
+    
+    print("Soph_IA V82 (Organique & Redflags Aware) est en ligne...")
     app.run_polling()
 
 if __name__ == "__main__":
