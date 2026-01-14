@@ -10,7 +10,7 @@ import time
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from dotenv import load_dotenv
-
+#commentaure
 # --- RAG ---
 try:
     from rag import rag_query
