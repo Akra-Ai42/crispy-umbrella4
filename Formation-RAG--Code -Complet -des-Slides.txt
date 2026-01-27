@@ -1,0 +1,356 @@
+==============================================================================
+
+FICHIER COMPLET : SNIPPETS DE CODE POUR LA FORMATION "MISE EN ORBITE"
+
+USINE IA - RAG & AGENTS
+
+==============================================================================
+
+==============================================================================
+
+SLIDE 0 : L'APPEL AU LLM (Le Cerveau)
+
+Concept : Comment envoyer du texte à une IA et recevoir une réponse ?
+
+Source : app.py (Adapté)
+
+==============================================================================
+
+On importe la librairie 'requests' qui permet à Python de parler à Internet.
+
+C'est comme ouvrir un navigateur web, mais via le code.
+
+import requests
+
+def interroger_llm(messages_historique):
+"""
+Fonction qui envoie l'historique de conversation à l'IA.
+"""
+
+# 1. L'Adresse (Endpoint) : C'est l'URL où vit le modèle d'IA.
+# Ici, on utilise Together AI qui héberge des modèles open-source puissants.
+url = "https://api.together.xyz/v1/chat/completions"
+
+# 2. Le Paquet (Payload) : C'est ce qu'on envoie dans l'enveloppe.
+payload = {
+    # On choisit le modèle "Llama-3-70b", très performant pour le français.
+    "model": "meta-llama/Llama-3-70b-chat-hf",
+    
+    # On donne tout l'historique de la discussion pour que l'IA ait le contexte.
+    "messages": messages_historique, 
+    
+    # La 'Temperature' gère la créativité. 
+    # 0.0 = Très rigide et factuel (bien pour le code).
+    # 0.7 = Naturel et conversationnel (bien pour Sophia).
+    # 1.0 = Très créatif, voire chaotique.
+    "temperature": 0.7,
+    
+    # 'max_tokens' limite la longueur de la réponse (environ 400 mots ici).
+    # Cela évite que l'IA n'écrive un roman et ne consomme tout le budget.
+    "max_tokens": 500
+}
+
+# 3. L'Envoi (Request) : On poste la lettre.
+# On ajoute la clé API (le mot de passe) dans les en-têtes (headers) pour avoir le droit d'entrer.
+response = requests.post(
+    url, 
+    json=payload, 
+    headers={"Authorization": "Bearer MA_CLE_SECRETE_API"}
+)
+
+# 4. La Réception : On ouvre l'enveloppe retournée par l'IA.
+# La réponse est au format JSON (texte structuré). On va chercher le contenu précis du message.
+# Structure : JSON > choices (choix) > premier choix [0] > message > content (le texte).
+contenu_texte = response.json()['choices'][0]['message']['content']
+
+return contenu_texte
+
+
+==============================================================================
+
+SLIDE 4 : L'INGESTION (La Matière Première)
+
+Concept : Transformer des fichiers bruts en données structurées pour l'IA.
+
+Source : Script d'ingestion
+
+==============================================================================
+
+import json # Librairie pour lire le format JSON (très courant sur le web).
+
+def charger_donnees(chemin_fichier):
+"""
+Lit un fichier ligne par ligne et prépare les données.
+"""
+
+# On crée une liste vide qui va contenir nos futurs documents propres.
+dataset_propre = []
+
+# On ouvre le fichier source (ex: 'sophia_data.jsonl') en mode lecture ('r').
+# encoding="utf-8" est crucial pour bien lire les accents français (é, à, è).
+with open(chemin_fichier, "r", encoding="utf-8") as f:
+    
+    # On parcourt le fichier ligne par ligne (comme une boucle).
+    for ligne in f:
+        
+        # Chaque ligne est du texte brut, on la convertit en dictionnaire Python (objet manipulable).
+        doc_brut = json.loads(ligne)
+        
+        # C'est ici qu'on fait le tri ! On ne garde que ce qui est utile.
+        # Par exemple, on enlève les dates ou les ID techniques inutiles pour l'IA.
+        objet_propre = {
+            # Le texte principal que l'IA devra lire.
+            "texte": doc_brut["texte_source"],
+            
+            # Les métadonnées : des étiquettes pour aider au filtrage plus tard.
+            # Ex: Est-ce un conseil psy ? Une procédure RH ?
+            "metadonnees": {
+                "theme": doc_brut["theme"], 
+                "source": "Manuel Interne"
+            }
+        }
+        
+        # On ajoute cet objet propre à notre liste finale.
+        dataset_propre.append(objet_propre)
+        
+# On retourne la liste propre, prête à être envoyée à l'étape suivante (Embedding).
+return dataset_propre
+
+
+==============================================================================
+
+SLIDE 5 : L'EMBEDDING (La Traduction Mathématique)
+
+Concept : Transformer des mots en vecteurs (listes de chiffres) pour comparer le sens.
+
+Source : rag.py
+
+==============================================================================
+
+import requests
+
+def generer_embedding(texte):
+"""
+Envoie un texte à un modèle spécialisé qui ne répond pas par du texte,
+mais par des coordonnées mathématiques (Vecteurs).
+"""
+
+# URL de l'API Hugging Face. On utilise un modèle spécialisé : 'all-MiniLM-L6-v2'.
+# Ce modèle est petit, rapide et très bon pour comprendre le sens des phrases.
+api_url = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2"
+
+# On envoie notre texte (ex: "Je me sens seul").
+payload = {"inputs": texte}
+
+# Appel API standard (POST).
+# Note : Dans la vraie vie, on gère les erreurs si le serveur ne répond pas.
+response = requests.post(
+    api_url, 
+    json=payload,
+    headers={"Authorization": "Bearer MA_CLE_HUGGINGFACE"}
+)
+
+# Le résultat n'est pas du texte ! C'est une liste de 384 nombres à virgule.
+# Exemple : [0.045, -0.122, 0.981, ...]
+# C'est la "signature sémantique" de la phrase.
+vecteur = response.json()
+
+return vecteur
+
+
+==============================================================================
+
+SLIDE 6 : LE STOCKAGE (La Mémoire Vectorielle)
+
+Concept : Ranger les vecteurs dans une base de données spéciale (ChromaDB).
+
+Source : Script d'ingestion (Adapté)
+
+==============================================================================
+
+On importe le client pour la base de données vectorielle ChromaDB.
+
+import chromadb
+
+1. Connexion au serveur
+
+Contrairement à une base SQL classique, on se connecte ici à un "Cloud Vectoriel".
+
+client = chromadb.CloudClient(
+api_key="MA_CLE_CHROMA",
+tenant="mon_tenant_prive" # Pour la sécurité des données (isolation).
+)
+
+2. Création de la Collection
+
+Une "Collection" est l'équivalent d'un dossier ou d'une table Excel.
+
+On lui donne un nom facile à retrouver.
+
+collection = client.get_or_create_collection(name="sophia_memoire_psy")
+
+3. Insertion des données
+
+On ajoute nos documents par paquets (batchs) pour aller plus vite.
+
+collection.add(
+# Chaque document doit avoir un ID unique (comme une plaque d'immatriculation).
+ids=["doc_1", "doc_2"],
+
+# Le texte brut (ce que l'humain lit).
+documents=[
+    "Je me sens seul le soir...", 
+    "Technique de respiration 4-7-8..."
+],
+
+# Les métadonnées (pour filtrer si besoin, ex: niveau de souffrance).
+metadatas=[
+    {"type": "émotion", "intensite": "haute"}, 
+    {"type": "conseil", "categorie": "stress"}
+],
+
+# Les vecteurs mathématiques calculés à l'étape précédente (Slide 5).
+# C'est grâce à eux que la recherche sera "intelligente".
+embeddings=[
+    [0.1, 0.2, 0.9], # (Simplifié pour l'exemple)
+    [0.5, 0.9, 0.1]
+]
+
+
+)
+
+Résultat : Les données sont stockées et indexées spatialement.
+
+"Tristesse" est maintenant stocké physiquement à côté de "Dépression" dans l'espace vectoriel.
+
+==============================================================================
+
+SLIDE 7 : LE RETRIEVAL (La Recherche Intelligente)
+
+Concept : Retrouver les documents pertinents en comparant les vecteurs.
+
+Source : rag.py
+
+==============================================================================
+
+Imaginons que l'utilisateur envoie ce message à Sophia.
+
+question_utilisateur = "J'ai envie de tout plaquer, je suis à bout."
+
+On interroge notre collection ChromaDB.
+
+Le moteur va automatiquement :
+
+1. Convertir la question de l'utilisateur en vecteur.
+
+2. Calculer la distance entre ce vecteur et tous ceux stockés.
+
+3. Renvoyer les plus proches (les plus similaires sémantiquement).
+
+resultats = collection.query(
+query_texts=[question_utilisateur],
+
+# On demande les 3 meilleurs résultats (Top-k).
+# Pourquoi 3 ? Pour donner assez de contexte à l'IA sans la noyer.
+n_results=3
+
+
+)
+
+Analyse des résultats
+
+On récupère le texte du document le plus pertinent (le premier de la liste).
+
+meilleur_document = resultats['documents'][0][0]
+
+On récupère aussi les métadonnées associées.
+
+C'est ici qu'on vérifie s'il y a un "Redflag" (danger suicide, etc.).
+
+infos_suplementaires = resultats['metadatas'][0][0]
+alerte_danger = infos_suplementaires.get('redflag')
+
+Si alerte_danger est "Oui", on pourra changer le comportement de Sophia.
+
+==============================================================================
+
+SLIDE 9 : USE CASE SOPHIA (L'Orchestration / Le Prompt)
+
+Concept : Assembler toutes les pièces pour donner des instructions à l'IA.
+
+Source : app.py
+
+==============================================================================
+
+def construire_prompt_systeme(profil_user, contexte_rag):
+"""
+Fabrique le 'Briefing' que l'IA lit avant de répondre.
+C'est ici qu'on injecte l'intelligence et la personnalité.
+"""
+
+# On utilise une f-string (f"...") pour insérer des variables dynamiques dans le texte.
+prompt = f"""
+### TON RÔLE ###
+Tu es Sophia, une confidente empathique et chaleureuse.
+Ton but est d'écouter sans juger.
+
+### PROFIL DE L'UTILISATEUR ###
+- Prénom : {profil_user['name']}
+- État d'esprit actuel : {profil_user['etat_esprit']} (Note: 0 = Épuisé, 10 = En forme)
+
+### MÉMOIRE EXPÉRIENTIELLE (RAG) ###
+Voici des extraits de cas similaires issus de ta base de connaissance.
+Utilise ces exemples pour t'inspirer, mais ne les recopie pas mot pour mot.
+
+CONTEXTE TROUVÉ :
+{contexte_rag}
+
+### RÈGLES DE SÉCURITÉ ###
+1. Si le contexte indique un danger (Redflag), sois très douce et propose le 3114.
+2. Ne finis JAMAIS par "Je suis là". Relance toujours par une question ouverte.
+"""
+
+return prompt
+
+
+Ce gros bloc de texte est ensuite envoyé au LLM (via la fonction de la Slide 0).
+
+==============================================================================
+
+SLIDE 11 : ALLER PLUS LOIN (Les Agents Autonomes)
+
+Concept : L'IA ne fait plus juste "parler", elle "agit" (Pseudo-code LangChain).
+
+Source : Conceptuel / Teasing Formation 2 Jours
+
+==============================================================================
+
+On imagine une classe 'Agent' capable de prendre des décisions.
+
+class AgentSophia:
+
+def agir(self, message_utilisateur):
+    
+    # ÉTAPE 1 : RÉFLEXION (Chain of Thought)
+    # L'agent analyse d'abord l'émotion avant de répondre.
+    emotion = analyseur_emotion.run(message_utilisateur)
+    print(f"Émotion détectée : {emotion}")
+    
+    # ÉTAPE 2 : DÉCISION (Routing)
+    # L'agent choisit un chemin en fonction de l'analyse (Boucle If/Else).
+    # C'est la différence fondamentale entre un "Chatbot" (passif) et un "Agent" (actif).
+    
+    if emotion == "Détresse Critique":
+        # Action concrète : Envoyer un SMS d'alerte.
+        # C'est une action dans le monde réel, pas juste du texte.
+        outil_sms.envoyer(destinataire="Docteur", body="Alerte patient")
+        return "Je contacte de l'aide immédiatement."
+        
+    elif emotion == "Besoin d'info":
+        # Action : Chercher dans la base RAG.
+        contexte = rag.rechercher(message_utilisateur)
+        return llm.generer_reponse(contexte)
+        
+    else:
+        # Action par défaut : Conversation simple.
+        return llm.bavarder(message_utilisateur)
