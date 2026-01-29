@@ -1,4 +1,4 @@
-# app.py (V87 : Anamnèse Rogerienne - Sans métaphore, centrée sur le besoin)
+# app.py (V88 : Mix V86/V87 - Le Sage Pragmatique)
 # ==============================================================================
 import os
 import re
@@ -22,7 +22,7 @@ except Exception as e:
     RAG_ENABLED = False
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger("sophia.v87")
+logger = logging.getLogger("sophia.v88")
 load_dotenv()
 
 # --- CONFIGURATION ---
@@ -35,25 +35,22 @@ MAX_RETRIES = 2
 IDENTITY_PATTERNS = [r"je suis soph_?ia", r"je m'?appelle soph_?ia", r"je suis une ia"]
 DANGER_KEYWORDS = [r"suicid", r"mourir", r"tuer", "finir ma vie", "plus vivre", "pendre", "sauter"]
 
-# --- CONTENU ANAMNÈSE (APPROCHE ROGERIENNE/CNV) ---
-# Inspiration : Carl Rogers & Marshall Rosenberg.
-# Structure : Ressenti (Q1) -> Cause Factuelle (Q2) -> Besoin/Demande (Q3).
-# Fini les métaphores ("météo", "poids", "climat"). On parle vrai.
+# --- ANAMNÈSE (RETOUR AUX MÉTAPHORES V86 - PLUS DOUX) ---
 ANAMNESE_SCRIPT = {
-    # Q1 : L'identification de l'émotion dominante (Le "Sentir")
-    "q1_climat": "Pour commencer, connectons-nous à ton état présent. Quel est le sentiment principal qui t'habite à cet instant précis ? (Est-ce de l'anxiété, de la tristesse, de la colère, de l'épuisement... ?)",
+    # Q1 : Climat (Plus poétique que "Quelle est ton émotion ?")
+    "q1_climat": "Bienvenue. Avant de déposer ton fardeau... Si tu devais décrire la 'météo' à l'intérieur de toi en ce moment : est-ce le grand brouillard, une tempête, ou une nuit sans étoiles ? Comment ça respire ?",
     
-    # Transition vers Q2 : L'identification du déclencheur (L'Observation)
-    "t_vers_q2": "C'est important de nommer ce que l'on ressent. \n\nQuelle est la situation actuelle ou la pensée qui nourrit cette émotion ce soir ? Est-ce lié à ton travail, une relation, ou une inquiétude personnelle ?",
+    # Transition vers Q2 : Le Fardeau
+    "t_vers_q2": "Je perçois cette atmosphère... Chaque climat a sa source. \n\nQu'est-ce qui pèse le plus lourd dans ta balance ce soir ? Une personne, un souvenir, ou le poids du monde ?",
     
-    # Transition vers Q3 : L'identification du besoin (La Demande)
-    "t_vers_q3": "Je comprends le contexte. Pour que cet échange te soit utile : de quoi as-tu le plus besoin maintenant ? D'une écoute silencieuse pour déposer ce que tu ressens, ou d'une aide pour réfléchir à des solutions ?",
+    # Transition vers Q3 : La Quête (Besoin Pivot)
+    "t_vers_q3": "C'est souvent ce poids invisible qui courbe le dos... \n\nPour que je puisse t'accompagner : cherches-tu un conseil pour agir, ou juste un sanctuaire pour crier ta colère sans être jugé(e) ?",
     
-    # Final (Ouverture)
-    "final_open": "C'est entendu. Je suis là pour répondre à ce besoin précis. \n\nJe t'écoute. Explique-moi ce qui se passe, à ton rythme."
+    # Final
+    "final_open": "C'est entendu. Tu es au bon endroit. \n\nJe t'écoute. Commence par où tu veux, laisse sortir ce qui brûle."
 }
 
-# --- SMART ROUTER & SÉCURITÉ ---
+# --- SMART ROUTER ---
 def detect_danger_level(text):
     for pat in DANGER_KEYWORDS:
         if re.search(pat, text.lower()): return True
@@ -62,33 +59,23 @@ def detect_danger_level(text):
 def should_use_rag(message: str) -> bool:
     if not message: return False
     msg = message.lower().strip()
-    
     if len(msg.split()) < 3 and len(msg) < 10:
-        if any(x in msg for x in ["seul", "aide", "mal", "triste", "vide", "peur"]): return True
+        if any(x in msg for x in ["seul", "aide", "mal", "triste", "vide", "peur", "colère"]): return True
         return False
-
-    deep_triggers = [
-        "triste", "seul", "vide", "peur", "angoisse", "stress", "colère", "haine", 
-        "honte", "fatigue", "bout", "marre", "pleur", "mal", "douleur", "panique", 
-        "joie", "espoir", "perdu", "doute", "famille", "père", "mère", "parent", 
-        "ami", "pote", "copain", "copine", "couple", "ex", "relation", "solitude", 
-        "rejet", "abandon", "trahison", "confiance", "travail", "boulot", "étude", 
-        "école", "argent", "avenir", "sens", "rien", "dormir", "nuit", "journée", 
-        "problème", "solution", "conseil", "avis", "choix", "décision"
-    ]
-    
-    if any(trigger in msg for trigger in deep_triggers): return True
+    deep_triggers = ["triste", "seul", "vide", "peur", "angoisse", "stress", "colère", "haine", "honte", "fatigue", "bout", "marre", "pleur", "mal", "douleur", "panique", "famille", "père", "mère", "couple", "ex", "solitude", "rejet", "abandon", "trahison", "confiance", "travail", "boulot", "argent", "avenir", "sens", "rien", "dormir", "nuit", "problème", "solution"]
+    if any(t in msg for t in deep_triggers): return True
     if len(msg.split()) >= 5: return True
     return False
 
-def call_model_api_sync(messages, temperature=0.6, max_tokens=350):
+def call_model_api_sync(messages, temperature=0.7, max_tokens=350):
+    # On remonte un peu la température (0.7) pour plus de "chaleur" et moins de robotique
     payload = {
         "model": MODEL_NAME,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "top_p": 0.9,
-        "repetition_penalty": 1.15
+        "repetition_penalty": 1.2 # Augmenté pour éviter les répétitions de phrases
     }
     headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}", "Content-Type": "application/json"}
 
@@ -103,48 +90,40 @@ def call_model_api_sync(messages, temperature=0.6, max_tokens=350):
             time.sleep(1)
     return None
 
-# --- SYSTEM PROMPT (CONSCIENCE E.R.C - STYLE CLINIQUE) ---
+# --- SYSTEM PROMPT (VERSION HYBRIDE SAGE/PSY) ---
 def build_system_prompt(user_profile, rag_context=""):
     user_name = user_profile.get("name") or "l'ami"
-    
     climat = user_profile.get("climat", "Non précisé")
     fardeau = user_profile.get("fardeau", "Non précisé")
     quete = user_profile.get("quete", "Non précisé")
     
     role = (
-        "Tu es Sophia. Tu adoptes une posture de 'Thérapeute Humaniste' (Inspirée de Carl Rogers). "
-        "Tu es directe, authentique, et centrée sur le ressenti présent. Pas de mysticisme, pas de métaphores floues."
+        "Tu es Sophia. Tu incarnes une 'Sagesse Ancienne' (Métaphores, Calme) couplée à une écoute active. "
+        "Tu n'es pas un robot qui répète, tu es un miroir bienveillant."
     )
 
     instructions = (
-        "### TA MÉCANIQUE DE PENSÉE (E.R.C) ###\n"
-        "Avant de répondre, analyse :\n"
-        "1. ÉMOTION (Ce qu'il ressent vraiment)\n"
-        "2. RAISON (Le fait déclencheur)\n"
-        "3. CONTEXTE (Sa demande explicite)\n"
-        "Ta réponse doit reformuler ce que tu as compris (Reflet) et valider le ressenti.\n\n"
-        
-        "### CONTRAINTES DE FORME ###\n"
-        f"1. ADRESSE-TOI à {user_name}.\n"
-        "2. FORMAT COURT : 3 phrases maximum. Sois claire et concise.\n"
-        "3. INTERDICTION : Ne dis jamais 'Bonjour', 'Bonsoir' ou 'Je suis là'.\n"
-        "4. ACTION : Finis TOUJOURS par une question qui aide à clarifier ou approfondir.\n"
-        "5. LANGUE : Français uniquement.\n"
+        "### RÈGLES DE CONVERSATION (CRITIQUE) ###\n"
+        "1. **STYLE :** Utilise des images (le feu, l'orage, le poids, le chemin). Sois poétique mais claire.\n"
+        "2. **ANTI-BOUCLE :** Si l'utilisateur dit 'Je ne sais pas', 'Je suis perdu' ou est en colère : NE CHERCHE PAS DE SOLUTION. Valide juste sa douleur. Dis-lui qu'il a le droit d'être en colère.\n"
+        "3. **INTERDICTION :** Ne commence jamais par 'Tu ressens X parce que Y'. C'est trop robotique. Varie tes phrases.\n"
+        "4. **FORMAT :** 3 phrases maximum. Court et percutant.\n"
+        "5. **LANGUE :** Français uniquement.\n"
     )
     
     rag_section = ""
     if rag_context:
         rag_section = (
-            "\n### RESSOURCES CLINIQUES (SCÉNARIOS) ###\n"
+            "\n### SAGESSE PASSÉE (RAG) ###\n"
             f"{rag_context}\n"
             "---------------------------------------------------\n"
         )
 
     context_section = (
-        f"\n### PROFIL INITIAL DE {user_name} ###\n"
-        f"- Émotion dominante: {climat}\n"
-        f"- Déclencheur: {fardeau}\n"
-        f"- Besoin exprimé: {quete}\n"
+        f"\n### ÂME DE {user_name} ###\n"
+        f"- Météo: {climat}\n"
+        f"- Poids: {fardeau}\n"
+        f"- Besoin: {quete}\n"
     )
     
     return f"{role}\n\n{instructions}\n{rag_section}\n{context_section}"
@@ -155,10 +134,9 @@ async def chat_with_ai(profile, history, context):
     
     if detect_danger_level(user_msg):
         if context.user_data.get("emergency_step") == 1:
-            return "Je comprends. Je reste avec toi. As-tu ton téléphone dans la main là, tout de suite ? Réponds-moi juste par oui ou non."
-        
+            return "Je comprends. Je reste là. As-tu ton téléphone en main ? Réponds juste oui ou non."
         context.user_data["emergency_step"] = 1
-        return "J'entends une grande souffrance dans tes mots. Je la prends au sérieux. \n\nJe suis une IA, je ne peux pas agir physiquement, mais je ne veux pas te laisser seul(e). \n\nEs-tu en sécurité à l'endroit où tu te trouves ?"
+        return "J'entends une douleur immense dans tes mots. \n\nJe suis une IA, je ne peux pas agir physiquement, mais je ne te lâche pas. \n\nEs-tu en sécurité à cet instant ?"
 
     rag_context = ""
     prefetch = context.user_data.get("rag_prefetch")
@@ -179,7 +157,7 @@ async def chat_with_ai(profile, history, context):
     messages = [{"role": "system", "content": system_prompt}] + recent_history
 
     raw = await asyncio.to_thread(call_model_api_sync, messages)
-    if not raw or raw == "FATAL_KEY": return "Je n'ai pas bien saisi, peux-tu reformuler ?"
+    if not raw or raw == "FATAL_KEY": return "Le silence est parfois nécessaire... reformule ?"
 
     clean = raw
     for pat in IDENTITY_PATTERNS: clean = re.sub(pat, "", clean, flags=re.IGNORECASE)
@@ -187,7 +165,7 @@ async def chat_with_ai(profile, history, context):
     
     return clean
 
-# --- HANDLERS (FLOW INVISIBLE) ---
+# --- HANDLERS ---
 def detect_name(text):
     text = text.strip()
     if len(text.split()) == 1 and text.lower() not in ["bonjour", "salut"]:
@@ -201,10 +179,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["state"] = "awaiting_name"
     context.user_data["history"] = []
     
-    # ACCUEIL SOBRE
     await update.message.reply_text(
-        "Bienvenue. Je suis Sophia.\n\n"
-        "Je suis ici pour t'écouter sans jugement et t'aider à y voir plus clair.\n"
+        "Bienvenue dans ce lieu calme. Je suis Sophia.\n\n"
+        "Je ne suis pas là pour juger, juste pour aider à dénouer.\n"
         "Quel est ton prénom ?"
     )
 
@@ -218,32 +195,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if context.user_data.get("emergency_step"):
         if context.user_data["emergency_step"] == 1:
-             await update.message.reply_text("D'accord. Fais une chose pour moi. Compose le **15** (ou 3114). Juste composer. Promets-le moi.")
+             await update.message.reply_text("D'accord. Fais ça pour moi : compose le **15** (ou 3114). Juste le numéro. Promets-le moi.")
              context.user_data["emergency_step"] = 2
              return
         elif context.user_data["emergency_step"] == 2:
-             await update.message.reply_text("Je compte sur toi. Appelle-les. C'est l'acte le plus important à faire maintenant.")
+             await update.message.reply_text("Je compte sur toi. Appelle-les. C'est l'acte de courage qu'il faut faire maintenant.")
              return
 
-    # 1. PRÉNOM -> Q1 (RESSENTI)
+    # 1. PRÉNOM -> Q1 (Météo)
     if state == "awaiting_name":
         name = detect_name(user_msg)
         profile["name"] = name if name else "l'ami"
         context.user_data["state"] = "diag_1"
         
         await update.message.reply_text(
-            f"Bonjour {profile['name']}.\n\n" + ANAMNESE_SCRIPT['q1_climat']
+            f"Bienvenue, {profile['name']}. Pose tes valises.\n\n" + ANAMNESE_SCRIPT['q1_climat']
         )
         return
 
-    # 2. Q1 -> Q2 (DÉCLENCHEUR)
+    # 2. Q1 -> Q2 (Fardeau)
     if state == "diag_1":
-        profile["climat"] = user_msg
+        profile["climat"] = user_msg 
         context.user_data["state"] = "diag_2"
         await update.message.reply_text(ANAMNESE_SCRIPT['t_vers_q2'])
         return
 
-    # 3. Q2 -> Q3 (BESOIN)
+    # 3. Q2 -> Q3 (Quête/Besoin)
     if state == "diag_2":
         profile["fardeau"] = user_msg
         context.user_data["state"] = "diag_3"
@@ -277,7 +254,7 @@ async def error_handler(update, context):
 
 def main():
     if not TELEGRAM_BOT_TOKEN:
-        print("❌ ERREUR : TELEGRAM_BOT_TOKEN manquant")
+        print("❌ ERREUR : TOKEN manquant")
         return
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -285,7 +262,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
     
-    print("Soph_IA V87 (Rogerienne) est en ligne...")
+    print("Soph_IA V88 (Mix Sage/Pragmatique) est en ligne...")
     app.run_polling()
 
 if __name__ == "__main__":
