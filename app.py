@@ -1,4 +1,4 @@
-# app.py (V88 : Mix V86/V87 - Le Sage Pragmatique)
+# app.py (V89 : Mode Diagnostic & Logs Détaillés pour Débogage RAG)
 # ==============================================================================
 import os
 import re
@@ -16,13 +16,13 @@ from dotenv import load_dotenv
 try:
     from rag import rag_query
     RAG_ENABLED = True
-    print("✅ [INIT] Module RAG chargé.")
+    print("✅ [INIT] Module RAG chargé avec succès.")
 except Exception as e:
-    print(f"⚠️ [INIT] RAG non trouvé: {e}")
+    print(f"⚠️ [INIT] ÉCHEC chargement RAG: {e}")
     RAG_ENABLED = False
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger("sophia.v88")
+logger = logging.getLogger("sophia.v89")
 load_dotenv()
 
 # --- CONFIGURATION ---
@@ -50,32 +50,54 @@ ANAMNESE_SCRIPT = {
     "final_open": "C'est entendu. Tu es au bon endroit. \n\nJe t'écoute. Commence par où tu veux, laisse sortir ce qui brûle."
 }
 
-# --- SMART ROUTER ---
+# --- SMART ROUTER (AVEC LOGS DE DIAGNOSTIC) ---
 def detect_danger_level(text):
     for pat in DANGER_KEYWORDS:
-        if re.search(pat, text.lower()): return True
+        if re.search(pat, text.lower()): 
+            print(f"🚨 [SÉCURITÉ] Mot-clé danger détecté : {pat}")
+            return True
     return False
 
 def should_use_rag(message: str) -> bool:
-    if not message: return False
-    msg = message.lower().strip()
-    if len(msg.split()) < 3 and len(msg) < 10:
-        if any(x in msg for x in ["seul", "aide", "mal", "triste", "vide", "peur", "colère"]): return True
+    print(f"🕵️ [DIAGNOSTIC] Analyse activation RAG pour : '{message}'")
+    
+    if not message: 
+        print("❌ [DIAGNOSTIC] Message vide -> Pas de RAG.")
         return False
+        
+    msg = message.lower().strip()
+    
+    # Cas 1 : Message court mais urgent
+    if len(msg.split()) < 3 and len(msg) < 10:
+        if any(x in msg for x in ["seul", "aide", "mal", "triste", "vide", "peur", "colère"]): 
+            print("✅ [DIAGNOSTIC] Message court + Mot clé émotion -> RAG ACTIVÉ.")
+            return True
+        print("🚫 [DIAGNOSTIC] Message trop court et neutre -> Pas de RAG.")
+        return False
+        
+    # Cas 2 : Mots clés profonds
     deep_triggers = ["triste", "seul", "vide", "peur", "angoisse", "stress", "colère", "haine", "honte", "fatigue", "bout", "marre", "pleur", "mal", "douleur", "panique", "famille", "père", "mère", "couple", "ex", "solitude", "rejet", "abandon", "trahison", "confiance", "travail", "boulot", "argent", "avenir", "sens", "rien", "dormir", "nuit", "problème", "solution"]
-    if any(t in msg for t in deep_triggers): return True
-    if len(msg.split()) >= 5: return True
+    for t in deep_triggers:
+        if t in msg:
+            print(f"✅ [DIAGNOSTIC] Trigger '{t}' détecté -> RAG ACTIVÉ.")
+            return True
+            
+    # Cas 3 : Longueur (Narration)
+    if len(msg.split()) >= 5: 
+        print("✅ [DIAGNOSTIC] Message long (Narration) -> RAG ACTIVÉ.")
+        return True
+        
+    print("🚫 [DIAGNOSTIC] Aucun critère rempli -> Pas de RAG.")
     return False
 
 def call_model_api_sync(messages, temperature=0.7, max_tokens=350):
-    # On remonte un peu la température (0.7) pour plus de "chaleur" et moins de robotique
     payload = {
         "model": MODEL_NAME,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "top_p": 0.9,
-        "repetition_penalty": 1.2 # Augmenté pour éviter les répétitions de phrases
+        "repetition_penalty": 1.2
     }
     headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}", "Content-Type": "application/json"}
 
@@ -85,12 +107,14 @@ def call_model_api_sync(messages, temperature=0.7, max_tokens=350):
             if r.status_code in (401, 403): return "FATAL_KEY"
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"].strip()
-        except Exception:
-            if attempt == MAX_RETRIES: return None
+        except Exception as e:
+            if attempt == MAX_RETRIES: 
+                print(f"❌ [API LLM] Erreur fatale : {e}")
+                return None
             time.sleep(1)
     return None
 
-# --- SYSTEM PROMPT (VERSION HYBRIDE SAGE/PSY) ---
+# --- SYSTEM PROMPT ---
 def build_system_prompt(user_profile, rag_context=""):
     user_name = user_profile.get("name") or "l'ami"
     climat = user_profile.get("climat", "Non précisé")
@@ -114,7 +138,7 @@ def build_system_prompt(user_profile, rag_context=""):
     rag_section = ""
     if rag_context:
         rag_section = (
-            "\n### SAGESSE PASSÉE (RAG) ###\n"
+            "\n### SAGESSE PASSÉE (RAG - SCÉNARIOS SIMILAIRES) ###\n"
             f"{rag_context}\n"
             "---------------------------------------------------\n"
         )
@@ -141,17 +165,38 @@ async def chat_with_ai(profile, history, context):
     rag_context = ""
     prefetch = context.user_data.get("rag_prefetch")
     
-    if should_use_rag(user_msg):
-        try:
-            print(f"🔍 [RAG] Recherche LIVE : {user_msg[:30]}...")
-            result = await asyncio.to_thread(rag_query, user_msg, 2)
-            rag_context = result.get("context", "")
-            context.user_data["rag_prefetch"] = None 
-        except Exception: pass
+    # --- BLOC DIAGNOSTIC RAG ---
+    should_search = should_use_rag(user_msg)
+    
+    if should_search:
+        if RAG_ENABLED:
+            try:
+                print(f"🚀 [RAG START] Lancement recherche LIVE pour : '{user_msg}'")
+                start_time = time.time()
+                
+                result = await asyncio.to_thread(rag_query, user_msg, 2)
+                
+                duration = time.time() - start_time
+                rag_context = result.get("context", "")
+                context.user_data["rag_prefetch"] = None 
+                
+                if rag_context:
+                    print(f"✅ [RAG SUCCESS] Contexte trouvé en {duration:.2f}s ({len(rag_context)} chars).")
+                else:
+                    print(f"⚠️ [RAG EMPTY] Recherche terminée mais AUCUN résultat pertinent trouvé.")
+            except Exception as e:
+                print(f"❌ [RAG ERROR] Le module a planté : {e}")
+        else:
+            print("⚠️ [RAG DISABLED] Le module est désactivé (import failed).")
+            
     elif prefetch:
         rag_context = prefetch
         context.user_data["rag_prefetch"] = None 
+        print("📦 [RAG PREFETCH] Utilisation du contexte pré-chargé.")
+    else:
+        print("💤 [RAG SKIP] Pas de recherche nécessaire.")
 
+    # --- GÉNÉRATION ---
     system_prompt = build_system_prompt(profile, rag_context)
     recent_history = history[-6:]
     messages = [{"role": "system", "content": system_prompt}] + recent_history
@@ -235,8 +280,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prefetch_query = f"Problème: {profile.get('fardeau')} Besoin: {profile.get('quete')} Psychologie"
         if RAG_ENABLED:
             try:
+                print(f"📦 [PREFETCH] Lancement prefetch pour : {prefetch_query}")
                 res = await asyncio.to_thread(rag_query, prefetch_query, 2)
-                if res.get("context"): context.user_data["rag_prefetch"] = res.get("context")
+                if res.get("context"): 
+                    context.user_data["rag_prefetch"] = res.get("context")
+                    print("✅ [PREFETCH] Succès.")
             except Exception: pass
         
         await update.message.reply_text(ANAMNESE_SCRIPT['final_open'])
@@ -262,7 +310,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
     
-    print("Soph_IA V88 (Mix Sage/Pragmatique) est en ligne...")
+    print("Soph_IA V89 (Mode Diagnostic Actif) est en ligne...")
     app.run_polling()
 
 if __name__ == "__main__":
