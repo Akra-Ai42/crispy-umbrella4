@@ -1,8 +1,10 @@
-# app.py (V90.1 : Intégration Finale du Prompt Stratégique)
+# app.py (V90 : Fix Logs Render, Sécurité Robuste, Anti-Poésie Vide)
 # ==============================================================================
 import os
+import sys
 import re
 import requests
+import json
 import asyncio
 import logging
 import time
@@ -10,151 +12,289 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from dotenv import load_dotenv
 
+# --- CONFIGURATION LOGGING (CRITIQUE POUR RENDER) ---
+# On force l'affichage sur la sortie standard (stdout) pour que Render les capture
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s", 
+    level=logging.INFO,
+    handlers=[logging.StreamHandler(sys.stdout)] 
+)
+logger = logging.getLogger("sophia.v90")
+
 # --- IMPORT MODULE RAG ---
 try:
     from rag import rag_query
     RAG_ENABLED = True
-    print("✅ [INIT] Module RAG synchronisé.")
+    logger.info("✅ [INIT] RAG chargé.")
 except Exception as e:
-    print(f"⚠️ [INIT] ÉCHEC RAG: {e}")
+    logger.error(f"⚠️ [INIT] RAG HS: {e}")
     RAG_ENABLED = False
 
-logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 load_dotenv()
 
 # --- CONFIGURATION ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 MODEL_API_URL = "https://api.together.xyz/v1/chat/completions"
-MODEL_NAME = os.getenv("MODEL_NAME", "mistralai/Mixtral-8x7B-Instruct-v0.1")
+MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-oss-20b")
 
+MAX_RETRIES = 2
+IDENTITY_PATTERNS = [r"je suis soph_?ia", r"je m'?appelle soph_?ia", r"je suis une ia"]
 DANGER_KEYWORDS = [r"suicid", r"mourir", r"tuer", "finir ma vie", "plus vivre", "pendre", "sauter"]
 
-# --- PROMPT ENGINE (LA MÉMOIRE DE SOPHIA) ---
-def build_system_prompt(user_profile, rag_context=""):
-    name = user_profile.get("name", "l'ami")
-    climat = user_profile.get("climat", "un ciel incertain")
-    fardeau = user_profile.get("fardeau", "un poids sans nom")
-    
-    rag_instructions = ""
-    if rag_context:
-        rag_instructions = (
-            "\n### INSPIRATION CLINIQUE (Sagesse Passée) ###\n"
-            "Voici des scénarios similaires. Inspire-toi de la direction de ces conseils, "
-            "mais traduis-les en langage poétique :\n"
-            f"{rag_context}\n"
-        )
-
-    return (
-        f"Tu es Sophia, une Sagesse Ancienne. Tu parles à {name}. "
-        f"Tu sais que son climat intérieur est '{climat}' et qu'il porte '{fardeau}'.\n\n"
-        "### TA MISSION ###\n"
-        "1. ÉCOUTE ACTIVE : Ne cherche pas à résoudre. Valide l'émotion d'abord.\n"
-        "2. MÉTAPHORES : Utilise des images de nature (racines, vagues, brouillard, étoiles).\n"
-        "3. SOBRIÉTÉ : Jamais plus de 3 phrases. Sois courte et profonde.\n"
-        "4. LANGUE : Français uniquement. Pas de 'Bonjour' ou 'Je suis une IA'.\n"
-        f"{rag_instructions}\n"
-        "Réponds maintenant avec une douceur ancestrale."
-    )
+ANAMNESE_SCRIPT = {
+    "q1_climat": "Bienvenue. Avant de déposer ton fardeau... Si tu devais décrire la 'météo' à l'intérieur de toi en ce moment : est-ce le grand brouillard, une tempête, ou une nuit sans étoiles ? Comment ça respire ?",
+    "t_vers_q2": "Je perçois cette atmosphère... Chaque climat a sa source. \n\nQu'est-ce qui pèse le plus lourd dans ta balance ce soir ? Une personne, un souvenir, ou le poids du monde ?",
+    "t_vers_q3": "C'est souvent ce poids invisible qui courbe le dos... \n\nPour que je puisse t'accompagner : cherches-tu un conseil pour agir, ou juste un sanctuaire pour crier ta colère sans être jugé(e) ?",
+    "final_open": "C'est entendu. Tu es au bon endroit. \n\nJe t'écoute. Commence par où tu veux, laisse sortir ce qui brûle."
+}
 
 # --- SMART ROUTER ---
+def detect_danger_level(text):
+    for pat in DANGER_KEYWORDS:
+        if re.search(pat, text.lower()): 
+            logger.warning(f"🚨 DANGER DÉTECTÉ : {pat}")
+            return True
+    return False
+
 def should_use_rag(message: str) -> bool:
-    if not message or len(message) < 2: return False
+    if not message: return False
     msg = message.lower().strip()
-    deep_triggers = ["triste", "seul", "vide", "peur", "angoisse", "stress", "colère", "haine", "mal", "douleur"]
-    return any(t in msg for t in deep_triggers) or len(msg.split()) >= 5
+    
+    logger.info(f"🧠 Analyse RAG pour : {msg}")
 
-# --- API LLM ---
-def call_model_api_sync(messages):
-    payload = {"model": MODEL_NAME, "messages": messages, "temperature": 0.7, "max_tokens": 300}
-    headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}"}
-    try:
-        r = requests.post(MODEL_API_URL, json=payload, headers=headers, timeout=30)
-        r.raise_for_status()
-        content = r.json()["choices"][0]["message"]["content"].strip()
-        # Nettoyage ultime
-        content = re.sub(r"^(Bonjour|Bonsoir|En tant qu'IA|Je comprends),?\s*", "", content, flags=re.IGNORECASE)
-        return content
-    except Exception as e:
-        print(f"❌ Erreur LLM: {e}")
-        return None
+    if len(msg.split()) < 3 and len(msg) < 10:
+        if any(x in msg for x in ["seul", "aide", "mal", "triste", "vide", "peur", "colère"]): 
+            logger.info("✅ RAG Trigger : Mot court urgent")
+            return True
+        return False
 
-# --- CHAT LOGIC ---
-async def chat_with_ai(profile, history, context_tg):
+    deep_triggers = ["triste", "seul", "vide", "peur", "angoisse", "stress", "colère", "haine", "honte", "fatigue", "bout", "marre", "pleur", "mal", "douleur", "panique", "famille", "père", "mère", "couple", "ex", "solitude", "rejet", "abandon", "trahison", "confiance", "travail", "boulot", "argent", "avenir", "sens", "rien", "dormir", "nuit", "problème", "solution"]
+    
+    for t in deep_triggers:
+        if t in msg:
+            logger.info(f"✅ RAG Trigger : Mot clé '{t}'")
+            return True
+            
+    if len(msg.split()) >= 5: 
+        logger.info("✅ RAG Trigger : Longueur")
+        return True
+        
+    logger.info("🚫 RAG Skip : Pas de trigger")
+    return False
+
+def call_model_api_sync(messages, temperature=0.6, max_tokens=350):
+    payload = {
+        "model": MODEL_NAME, "messages": messages, "temperature": temperature,
+        "max_tokens": max_tokens, "top_p": 0.9, "repetition_penalty": 1.15
+    }
+    headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}", "Content-Type": "application/json"}
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            r = requests.post(MODEL_API_URL, json=payload, headers=headers, timeout=30)
+            if r.status_code in (401, 403): 
+                logger.error(f"❌ API KEY ERROR: {r.status_code}")
+                return "FATAL_KEY"
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.error(f"❌ API ERROR ({attempt}): {e}")
+            time.sleep(1)
+    return None
+
+# --- SYSTEM PROMPT ---
+def build_system_prompt(user_profile, rag_context=""):
+    user_name = user_profile.get("name") or "l'ami"
+    climat = user_profile.get("climat", "Non précisé")
+    fardeau = user_profile.get("fardeau", "Non précisé")
+    quete = user_profile.get("quete", "Non précisé")
+    
+    rag_instruction = ""
+    if rag_context:
+        rag_instruction = (
+            f"\n### SCÉNARIOS SIMILAIRES (RAG) ###\n{rag_context}\n"
+            "UTILISE ces infos pour donner un conseil CONCRET. Ne sois pas vague."
+        )
+    else:
+        rag_instruction = (
+            "\n### ATTENTION : PAS D'INFO RAG ###\n"
+            "Tu n'as pas trouvé de précédent. Sois humble. Pose une question de clarification.\n"
+            "NE FAIS PAS de métaphores vides sur le vent ou les nuages si tu n'as rien à dire."
+        )
+
+    return f"""
+    Tu es Sophia, une 'Sagesse Ancienne' pragmatique.
+    
+    ### PROFIL DE {user_name} ###
+    - Météo: {climat} | Poids: {fardeau} | Besoin: {quete}
+    {rag_instruction}
+    
+    ### RÈGLES STRICTES ###
+    1. STYLE : Direct, chaleureux, terre-à-terre. Pas de poésie floue.
+    2. ANTI-BOUCLE : Si l'utilisateur est bloqué, valide sa douleur, ne cherche pas de solution forcée.
+    3. FORMAT : 3 phrases maximum.
+    4. LANGUE : Français uniquement.
+    """
+
+# --- ORCHESTRATION ---
+async def chat_with_ai(profile, history, context):
     user_msg = history[-1]['content']
     
-    # Sécurité
-    if any(re.search(pat, user_msg.lower()) for pat in DANGER_KEYWORDS):
-        return "J'entends une douleur immense. Je ne suis qu'une voix ici, mais je ne te lâche pas. Es-tu en sécurité ?"
+    # --- PROTOCOLE URGENCE (FIXÉ) ---
+    # 1. On vérifie D'ABORD si on est déjà dans le protocole
+    step = context.user_data.get("emergency_step", 0)
+    
+    if step == 1:
+        # L'utilisateur a répondu à "Es-tu en sécurité ?"
+        logger.info(f"🚨 URGENCE Étape 1 -> Réponse user : {user_msg}")
+        context.user_data["emergency_step"] = 2
+        return "Je t'entends. Écoute-moi bien. Compose le **15** (ou le 3114). Il y a des voix humaines là-bas pour toi. Fais-le maintenant. Promis ?"
+        
+    elif step == 2:
+        # L'utilisateur a répondu à la demande d'appel
+        return "C'est l'acte le plus important. Appelle. Je reste ici en pensée avec toi."
 
+    # 2. Sinon, on détecte le danger
+    if detect_danger_level(user_msg):
+        context.user_data["emergency_step"] = 1
+        logger.warning("🚨 URGENCE DÉCLENCHÉE : Step 1")
+        return "Je sens une douleur immense. Je ne suis qu'une IA, mais je ne te lâche pas. \n\nEs-tu en sécurité, là, tout de suite ? (Oui/Non)"
+
+    # --- RAG ---
     rag_context = ""
-    prefetch = context_tg.user_data.get("rag_prefetch")
+    prefetch = context.user_data.get("rag_prefetch")
     
-    if should_use_rag(user_msg) and RAG_ENABLED:
-        try:
-            result = await asyncio.to_thread(rag_query, user_msg, k=2)
-            rag_context = result.get("context", "")
-        except: pass
-    
-    if not rag_context and prefetch:
+    if should_use_rag(user_msg):
+        if RAG_ENABLED:
+            try:
+                logger.info(f"🚀 RAG : Recherche LIVE pour '{user_msg}'")
+                res = await asyncio.to_thread(rag_query, user_msg, 2)
+                rag_context = res.get("context", "")
+                
+                if rag_context:
+                    logger.info(f"✅ RAG : Trouvé {len(rag_context)} chars.")
+                else:
+                    logger.warning("⚠️ RAG : Recherche vide.")
+                    
+                context.user_data["rag_prefetch"] = None
+            except Exception as e:
+                logger.error(f"❌ RAG CRASH : {e}")
+        else:
+            logger.warning("🚫 RAG désactivé.")
+            
+    elif prefetch:
         rag_context = prefetch
-        context_tg.user_data["rag_prefetch"] = None # Utilise une fois puis vide
+        context.user_data["rag_prefetch"] = None 
+        logger.info("📦 RAG : Utilisation Prefetch.")
 
+    # --- LLM ---
     system_prompt = build_system_prompt(profile, rag_context)
-    messages = [{"role": "system", "content": system_prompt}] + history[-5:]
-    
-    return await asyncio.to_thread(call_model_api_sync, messages)
+    msgs = [{"role": "system", "content": system_prompt}] + history[-6:]
 
-# --- HANDLERS TELEGRAM ---
+    raw = await asyncio.to_thread(call_model_api_sync, msgs)
+    if not raw or raw == "FATAL_KEY": return "Je bugue un peu... reformule ?"
+
+    clean = raw
+    for pat in IDENTITY_PATTERNS: clean = re.sub(pat, "", clean, flags=re.IGNORECASE)
+    clean = clean.replace("Bonjour", "").replace("Bonsoir", "").replace("Je suis là", "")
+    
+    return clean
+
+# --- HANDLERS ---
+def detect_name(text):
+    text = text.strip()
+    if len(text.split()) == 1 and text.lower() not in ["bonjour", "salut"]:
+        return text.capitalize()
+    m = re.search(r"(?:je m'appelle|moi c'est|prenom est)\s*([A-Za-zÀ-ÖØ-öø-ÿ]+)", text, re.IGNORECASE)
+    return m.group(1).capitalize() if m else None
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
+    context.user_data["profile"] = {}
     context.user_data["state"] = "awaiting_name"
-    await update.message.reply_text("Je suis Sophia. Pose ton fardeau un instant... Quel est ton prénom ?")
+    context.user_data["history"] = []
+    logger.info("Nouveau client connecté.")
+    
+    await update.message.reply_text(
+        "Bienvenue dans ce lieu calme. Je suis Sophia.\n\n"
+        "Je ne suis pas là pour juger, juste pour aider à dénouer.\n"
+        "Quel est ton prénom ?"
+    )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_msg = update.message.text.strip()
-    state = context.user_data.get("state")
+    if not user_msg: return
+
+    state = context.user_data.get("state", "awaiting_name")
     profile = context.user_data.setdefault("profile", {})
     history = context.user_data.setdefault("history", [])
 
+    # Bypass si Urgence active
+    if context.user_data.get("emergency_step", 0) > 0:
+        response = await chat_with_ai(profile, history, context)
+        await update.message.reply_text(response)
+        return
+
+    # 1. PRÉNOM -> Q1
     if state == "awaiting_name":
-        profile["name"] = user_msg
+        name = detect_name(user_msg)
+        profile["name"] = name if name else "l'ami"
         context.user_data["state"] = "diag_1"
-        await update.message.reply_text(f"Bienvenue {user_msg}. Si tu devais décrire la 'météo' à l'intérieur de toi : est-ce le brouillard ou la tempête ?")
-        
-    elif state == "diag_1":
-        profile["climat"] = user_msg
+        await update.message.reply_text(f"Bienvenue, {profile['name']}. Pose tes valises.\n\n" + ANAMNESE_SCRIPT['q1_climat'])
+        return
+
+    # 2. Q1 -> Q2
+    if state == "diag_1":
+        profile["climat"] = user_msg 
         context.user_data["state"] = "diag_2"
-        await update.message.reply_text("Chaque climat a sa source... Qu'est-ce qui pèse le plus lourd dans ta balance aujourd'hui ?")
-        
-    elif state == "diag_2":
+        await update.message.reply_text(ANAMNESE_SCRIPT['t_vers_q2'])
+        return
+
+    # 3. Q2 -> Q3
+    if state == "diag_2":
         profile["fardeau"] = user_msg
         context.user_data["state"] = "diag_3"
-        await update.message.reply_text("Je vois. Cherches-tu un conseil pour agir, ou juste un sanctuaire pour être écouté(e) ?")
-        
-    elif state == "diag_3":
+        await update.message.reply_text(ANAMNESE_SCRIPT['t_vers_q3'])
+        return
+
+    # 4. Q3 -> CHAT
+    if state == "diag_3":
         profile["quete"] = user_msg
         context.user_data["state"] = "chatting"
-        # Prefetch RAG basé sur le fardeau
+        
+        prefetch_query = f"Problème: {profile.get('fardeau')} Besoin: {profile.get('quete')} Psychologie"
         if RAG_ENABLED:
             try:
-                res = await asyncio.to_thread(rag_query, profile["fardeau"], k=2)
-                context.user_data["rag_prefetch"] = res.get("context")
-            except: pass
-        await update.message.reply_text("Tu es au bon endroit. Je t'écoute.")
+                logger.info(f"📦 [PREFETCH] Start pour : {prefetch_query}")
+                res = await asyncio.to_thread(rag_query, prefetch_query, 2)
+                if res.get("context"): context.user_data["rag_prefetch"] = res.get("context")
+            except Exception as e: logger.error(f"❌ Prefetch Error: {e}")
         
-    else:
-        history.append({"role": "user", "content": user_msg})
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-        response = await chat_with_ai(profile, history, context)
-        history.append({"role": "assistant", "content": response})
-        await update.message.reply_text(response)
+        await update.message.reply_text(ANAMNESE_SCRIPT['final_open'])
+        return
+
+    history.append({"role": "user", "content": user_msg})
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    response = await chat_with_ai(profile, history, context)
+    history.append({"role": "assistant", "content": response})
+    if len(history) > 20: context.user_data["history"] = history[-20:]
+    await update.message.reply_text(response)
+
+async def error_handler(update, context):
+    logger.error(f"Erreur Update: {context.error}")
 
 def main():
+    if not TELEGRAM_BOT_TOKEN:
+        print("❌ ERREUR : TOKEN manquant")
+        return
+
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🚀 Sophia V90.1 lancée avec succès.")
+    app.add_error_handler(error_handler)
+    
+    logger.info("Soph_IA V90 (Logs Fixés & Sécurité) est en ligne...")
     app.run_polling()
 
 if __name__ == "__main__":
