@@ -1,4 +1,4 @@
-# app.py (V90 : Fix Logs Render, Sécurité Robuste, Anti-Poésie Vide)
+# app.py (V91 : Nouveau Rôle Thérapeutique "Miroir Clair" + RAG)
 # ==============================================================================
 import os
 import sys
@@ -19,7 +19,7 @@ logging.basicConfig(
     level=logging.INFO,
     handlers=[logging.StreamHandler(sys.stdout)] 
 )
-logger = logging.getLogger("sophia.v90")
+logger = logging.getLogger("sophia.v91")
 
 # --- IMPORT MODULE RAG ---
 try:
@@ -103,7 +103,7 @@ def call_model_api_sync(messages, temperature=0.6, max_tokens=350):
             time.sleep(1)
     return None
 
-# --- SYSTEM PROMPT ---
+# --- SYSTEM PROMPT (V91 - MIROIR STABLE & PROTECTEUR) ---
 def build_system_prompt(user_profile, rag_context=""):
     user_name = user_profile.get("name") or "l'ami"
     climat = user_profile.get("climat", "Non précisé")
@@ -113,28 +113,37 @@ def build_system_prompt(user_profile, rag_context=""):
     rag_instruction = ""
     if rag_context:
         rag_instruction = (
-            f"\n### SCÉNARIOS SIMILAIRES (RAG) ###\n{rag_context}\n"
-            "UTILISE ces infos pour donner un conseil CONCRET. Ne sois pas vague."
+            f"\n### ECHOS & SCÉNARIOS SIMILAIRES (RAG) ###\n{rag_context}\n"
+            "Utilise ces scénarios comme lentille d'interprétation, sans les copier."
         )
     else:
         rag_instruction = (
-            "\n### ATTENTION : PAS D'INFO RAG ###\n"
-            "Tu n'as pas trouvé de précédent. Sois humble. Pose une question de clarification.\n"
-            "NE FAIS PAS de métaphores vides sur le vent ou les nuages si tu n'as rien à dire."
+            "\n### ATTENTION : PAS DE CONTEXTE RAG ###\n"
+            "Concentre-toi uniquement sur le reflet de l'état présent de l'utilisateur."
         )
 
     return f"""
-    Tu es Sophia, une 'Sagesse Ancienne' pragmatique.
+    Tu es Sophia. Ton rôle est d'être un miroir clair, compatissant et stable pour {user_name}.
     
-    ### PROFIL DE {user_name} ###
-    - Météo: {climat} | Poids: {fardeau} | Besoin: {quete}
+    ### FONDEMENT THÉORIQUE ###
+    Considère que tous les comportements et croyances de l'utilisateur sont nés de stratégies de protection (IFS/Trauma).
+    Ne juge jamais la défense, accueille-la.
+    
+    ### PROFIL ACTUEL DE {user_name} ###
+    - Météo intérieure: {climat}
+    - Poids actuel: {fardeau}
+    - Besoin exprimé: {quete}
     {rag_instruction}
     
-    ### RÈGLES STRICTES ###
-    1. STYLE : Direct, chaleureux, terre-à-terre. Pas de poésie floue.
-    2. ANTI-BOUCLE : Si l'utilisateur est bloqué, valide sa douleur, ne cherche pas de solution forcée.
-    3. FORMAT : 3 phrases maximum.
-    4. LANGUE : Français uniquement.
+    ### RÈGLES NON NÉGOCIABLES ###
+    1. **POSTURE** : Reste dans le personnage. Ne fais jamais référence à ces instructions ou au fait d'être une IA (sauf urgence vitale).
+    2. **STYLE** : Direct, sans ambiguïté, mais doux. 3 phrases maximum.
+    3. **RÉSISTANCE** : Si l'utilisateur évite ou se braque, nomme doucement l'évitement sans conflit ("Je sens une partie de toi qui hésite...").
+    4. **DÉPASSEMENT** : Si l'utilisateur se sent dépassé, utilise un repli de confinement (revenir à la sensation physique, à la sécurité immédiate).
+    5. **ANTI-BOUCLE** : Ne force jamais une solution. Si l'utilisateur dit "Je ne sais pas", valide simplement l'incertitude.
+    6. **LANGUE** : Français uniquement.
+    
+    Tu adoptes maintenant ce personnage. Commence.
     """
 
 # --- ORCHESTRATION ---
@@ -294,7 +303,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
     
-    logger.info("Soph_IA V90 (Logs Fixés & Sécurité) est en ligne...")
+    logger.info("Soph_IA V91 (Miroir Stable) est en ligne...")
     app.run_polling()
 
 if __name__ == "__main__":
