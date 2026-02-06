@@ -1,4 +1,4 @@
-# app.py (V96 : Onboarding Affectif, Reset Total & Adaptation Genre/Âge)
+# app.py (V97 : Fix Crash AttributeError & Gestion Erreur RAG)
 # ==============================================================================
 import os
 import sys
@@ -19,7 +19,7 @@ logging.basicConfig(
     level=logging.INFO,
     handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger("sophia.v96")
+logger = logging.getLogger("sophia.v97")
 load_dotenv()
 
 # --- RAG CHECK ---
@@ -27,9 +27,9 @@ try:
     from rag import rag_query
     RAG_ENABLED = True
     logger.info("✅ [INIT] RAG chargé.")
-except:
+except Exception as e:
     RAG_ENABLED = False
-    logger.warning("⚠️ [INIT] RAG désactivé.")
+    logger.warning(f"⚠️ [INIT] RAG désactivé : {e}")
 
 # --- CONFIG ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -39,14 +39,12 @@ MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-oss-20b")
 DANGER_KEYWORDS = [r"suicid", r"mourir", r"tuer", "finir ma vie", "plus vivre", "pendre", "sauter"]
 
 # --- CONTENU DU BOT ---
-# Surnoms dynamiques selon le genre
 NICKNAMES = {
     "F": ["ma belle", "ma chérie", "ma grande", "mon cœur"],
     "M": ["mon grand", "mon champion", "l'ami", "mon cœur"],
-    "N": ["toi", "mon ami(e)", "trésor"] # Neutre
+    "N": ["toi", "mon ami(e)", "trésor"]
 }
 
-# Messages proactifs (Matin/Midi/Soir)
 PROACTIVE_MSGS = {
     "morning": [
         "Bonjour {name} ☀️. J'espère que la nuit a été douce. Je suis là si tu as besoin de force.",
@@ -82,12 +80,26 @@ class SophiaBrain:
         except:
             return "BIENVEILLANTE (Ton standard)."
 
+    # CORRECTION : Ajout de la méthode manquante qui causait le crash
+    def should_activate_rag(self, message: str) -> bool:
+        """Décide si le message nécessite une recherche RAG."""
+        if not message: return False
+        msg = message.lower().strip()
+        # Critères simples : longueur ou mots-clés
+        if len(msg.split()) > 4: return True
+        keywords = ["triste", "seul", "peur", "colère", "mal", "aide", "famille", "papa", "maman", "vide", "fatigue", "pleure", "conseil", "solution"]
+        if any(k in msg for k in keywords): return True
+        return False
+
     async def get_rag_context(self, query):
         if not RAG_ENABLED: return ""
         try:
-            res = await asyncio.to_thread(rag_query, query, 2)
+            # On utilise un timeout pour ne pas bloquer le bot si Chroma ne répond pas
+            res = await asyncio.wait_for(asyncio.to_thread(rag_query, query, 2), timeout=5.0)
             return res.get("context", "")
-        except: return ""
+        except Exception as e:
+            logger.error(f"❌ Erreur RAG lors de la requête : {e}")
+            return ""
 
     def generate_response(self, messages, temperature=0.75):
         payload = {
@@ -99,7 +111,6 @@ class SophiaBrain:
             r = requests.post(MODEL_API_URL, json=payload, headers=headers, timeout=30)
             if r.status_code == 200:
                 content = r.json()["choices"][0]["message"]["content"].strip()
-                # Nettoyage des tics de langage
                 return content.replace("Bonjour", "").replace("Bonsoir", "").replace("Je suis là", "")
         except Exception as e:
             logger.error(f"API Error: {e}")
@@ -109,9 +120,13 @@ class SophiaBrain:
 class SophiaBot:
     def __init__(self):
         self.brain = SophiaBrain()
+        # Vérification du token au démarrage
+        if not TELEGRAM_BOT_TOKEN:
+            logger.critical("❌ TOKEN MANQUANT ! Vérifiez les variables d'environnement.")
+            sys.exit(1)
+            
         self.app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
         
-        # Handlers
         self.app.add_handler(CommandHandler("start", self.start))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
 
@@ -126,7 +141,6 @@ class SophiaBot:
         context.user_data["state"] = "ASK_NAME"
         context.user_data["history"] = []
         
-        # Lancement Job Queue pour les messages proactifs (Reset aussi)
         self._setup_schedule(context, user_id)
 
         await update.message.reply_text(
@@ -155,7 +169,6 @@ class SophiaBot:
             profile["name"] = msg.split()[0].capitalize()
             context.user_data["state"] = "ASK_GENDER"
             
-            # Clavier pour le genre
             keyboard = [['Une Femme 👩', 'Un Homme 👨'], ['Neutre 👤']]
             markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
             
@@ -182,7 +195,6 @@ class SophiaBot:
 
         if state == "ASK_AGE":
             profile["age"] = msg
-            # Fin de l'onboarding -> On lance l'anamnèse
             context.user_data["state"] = "DIAG_1"
             
             nickname = self.brain.get_dynamic_nickname(profile["genre"])
@@ -210,7 +222,6 @@ class SophiaBot:
             profile["besoin"] = msg
             context.user_data["state"] = "CHATTING"
             
-            # Prefetch RAG silencieux
             q = f"Problème: {profile.get('climat')} Besoin: {profile.get('besoin')}"
             context.user_data["rag_prefetch"] = await self.brain.get_rag_context(q)
             
@@ -231,9 +242,8 @@ class SophiaBot:
         rag_context = context.user_data.get("rag_prefetch") or ""
         if not rag_context and self.brain.should_activate_rag(msg):
             rag_context = await self.brain.get_rag_context(msg)
-        context.user_data["rag_prefetch"] = None # Consommé
+        context.user_data["rag_prefetch"] = None 
 
-        # Prompt Dynamique
         tone = self.brain.get_role_tone(profile.get("age"))
         nickname = self.brain.get_dynamic_nickname(profile.get("genre"))
         
@@ -284,20 +294,16 @@ class SophiaBot:
         elif step == 2:
             await update.message.reply_text("Je reste là. Dis-moi que tu as appelé. Je suis inquiète pour toi.")
 
-    # --- SCHEDULER (MESSAGES PROACTIFS) ---
+    # --- SCHEDULER ---
     def _setup_schedule(self, context, chat_id):
-        # Supprime anciens jobs
         jobs = context.job_queue.get_jobs_by_name(str(chat_id))
         for j in jobs: j.schedule_removal()
         
-        # Définit nouveaux jobs (Paris Time)
         tz = pytz.timezone("Europe/Paris")
         name = context.user_data["profile"].get("name", "toi")
         
-        # Matin 08:30
         context.job_queue.run_daily(self._send_proactive, dt_time(8, 30, tzinfo=tz), 
                                   data={"cid": chat_id, "msg": random.choice(PROACTIVE_MSGS["morning"]).format(name=name)}, name=str(chat_id))
-        # Soir 21:30
         context.job_queue.run_daily(self._send_proactive, dt_time(21, 30, tzinfo=tz), 
                                   data={"cid": chat_id, "msg": random.choice(PROACTIVE_MSGS["night"]).format(name=name)}, name=str(chat_id))
 
@@ -308,10 +314,6 @@ class SophiaBot:
 
 # --- MAIN ---
 if __name__ == "__main__":
-    if not TELEGRAM_BOT_TOKEN:
-        print("❌ TOKEN MANQUANT")
-        sys.exit(1)
-    
     bot = SophiaBot()
-    logger.info("Soph_IA V96 (Affective) en ligne...")
+    logger.info("Soph_IA V97 (Correctif) en ligne...")
     bot.app.run_polling()
