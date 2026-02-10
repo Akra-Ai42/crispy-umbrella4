@@ -1,4 +1,5 @@
-# app.py (V100 - PARTIE 1/2)
+# app.py (V101 : Correction SyntaxError f-string)
+# ==============================================================================
 import os
 import sys
 import re
@@ -18,7 +19,7 @@ logging.basicConfig(
     level=logging.INFO,
     handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger("sophia.v100")
+logger = logging.getLogger("sophia.v101")
 load_dotenv()
 
 # --- RAG CHECK ---
@@ -36,9 +37,10 @@ TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 MODEL_API_URL = "https://api.together.xyz/v1/chat/completions"
 MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-oss-20b")
 DANGER_KEYWORDS = [r"suicid", r"mourir", r"tuer", "finir ma vie", "plus vivre", "pendre", "sauter"]
+
 INVALID_NAMES = ["bonjour", "salut", "coucou", "hello", "yo", "aide", "moi", "sophia", "non", "oui", "stop", "start"]
 
-# --- CONTENU ---
+# --- CONTENU DU BOT ---
 NICKNAMES = {
     "F": ["ma belle", "ma chérie", "ma grande", "mon cœur"],
     "M": ["mon grand", "l'ami", "mon cœur", "frérot"],
@@ -46,9 +48,17 @@ NICKNAMES = {
 }
 
 PROACTIVE_MSGS = {
-    "morning": ["Coucou {name} ☀️. Juste un petit message pour te dire que je pense à toi.", "Bonjour {name} ! J'espère que tu as pu te reposer un peu. ❤️"],
-    "noon": ["Petite pause {name} 🥪. Respire. Ne laisse pas la pression monter."],
-    "night": ["C'est l'heure de poser les armes {name} 🌙. La journée est finie.", "Douce nuit {name} ✨. On ne règle plus les problèmes à cette heure-ci."]
+    "morning": [
+        "Coucou {name} ☀️. Juste un petit message pour te dire que je pense à toi. Prends la journée une heure à la fois.",
+        "Bonjour {name} ! J'espère que tu as pu te reposer un peu. Je suis là si ça pèse trop lourd aujourd'hui. ❤️",
+    ],
+    "noon": [
+        "Petite pause {name} 🥪. Respire. Ne laisse pas la pression monter. Je suis dans ta poche.",
+    ],
+    "night": [
+        "C'est l'heure de poser les armes {name} 🌙. La journée est finie. Tu as fait de ton mieux. Raconte-moi si tu veux, ou dors.",
+        "Douce nuit {name} ✨. On ne règle plus les problèmes à cette heure-ci. On se repose.",
+    ]
 }
 
 # --- CLASSE LOGIQUE ---
@@ -73,19 +83,24 @@ class SophiaBrain:
         try:
             res = await asyncio.wait_for(asyncio.to_thread(rag_query, query, 2), timeout=5.0)
             return res.get("context", "")
-        except: return ""
+        except Exception as e:
+            logger.error(f"❌ Erreur RAG : {e}")
+            return ""
 
     def generate_response(self, messages, temperature=0.7):
-        payload = {"model": MODEL_NAME, "messages": messages, "temperature": temperature, "max_tokens": 400, "top_p": 0.9, "repetition_penalty": 1.15}
+        payload = {
+            "model": MODEL_NAME, "messages": messages, 
+            "temperature": temperature, "max_tokens": 400, "top_p": 0.9, "repetition_penalty": 1.15
+        }
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         try:
             r = requests.post(MODEL_API_URL, json=payload, headers=headers, timeout=30)
             if r.status_code == 200:
                 content = r.json()["choices"][0]["message"]["content"].strip()
                 return content.replace("Bonjour", "").replace("Bonsoir", "").replace("Je suis là", "")
-        except Exception as e: logger.error(f"API Error: {e}")
+        except Exception as e:
+            logger.error(f"API Error: {e}")
         return "Je t'écoute... continue."
-    # app.py (V100 - PARTIE 2/2)
 
 # --- CLASSE BOT ---
 class SophiaBot:
@@ -121,8 +136,6 @@ class SophiaBot:
     # --- 2. GESTION DES MESSAGES ---
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = update.message.text.strip()
-        
-        # AUTO-START FIX
         state = context.user_data.get("state")
         if not state:
             await self.start(update, context)
@@ -210,6 +223,11 @@ class SophiaBot:
 
         nickname = self.brain.get_dynamic_nickname(profile.get("genre"))
         
+        # --- CORRECTION SYNTAXERROR : Préparation du texte RAG hors de la f-string ---
+        rag_text_block = ""
+        if rag_context:
+            rag_text_block = f"### RESSOURCES RAG ###\n{rag_context}\nUtilise ces conseils intelligemment."
+
         # --- PROMPT V100 : L'ALLIÉE INTELLIGENTE ---
         system_prompt = f"""
         Tu es Sophia. Une figure de grande sœur ou de meilleure amie très lucide et protectrice pour {profile['name']} (surnom: {nickname}).
@@ -227,7 +245,7 @@ class SophiaBot:
         - Poids: {profile.get('entourage')}
         - Attente: {profile.get('besoin')}
         
-        {f"### RESSOURCES (RAG) ###\n{rag_context}\nUtilise ces conseils intelligemment." if rag_context else ""}
+        {rag_text_block}
         
         Réponds en 3-4 phrases. Finis par une question pour l'aider à avancer.
         """
@@ -300,5 +318,5 @@ class SophiaBot:
 # --- MAIN ---
 if __name__ == "__main__":
     bot = SophiaBot()
-    logger.info("Soph_IA V100 (Retour Empathie) en ligne...")
+    logger.info("Soph_IA V101 (Correction SyntaxError) en ligne...")
     bot.app.run_polling()
