@@ -1,5 +1,4 @@
-# app.py (V99 : Auto-Start, Fix Prénom & Stabilité)
-# ==============================================================================
+# app.py (V100 - PARTIE 1/2)
 import os
 import sys
 import re
@@ -19,7 +18,7 @@ logging.basicConfig(
     level=logging.INFO,
     handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger("sophia.v99")
+logger = logging.getLogger("sophia.v100")
 load_dotenv()
 
 # --- RAG CHECK ---
@@ -37,29 +36,19 @@ TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 MODEL_API_URL = "https://api.together.xyz/v1/chat/completions"
 MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-oss-20b")
 DANGER_KEYWORDS = [r"suicid", r"mourir", r"tuer", "finir ma vie", "plus vivre", "pendre", "sauter"]
+INVALID_NAMES = ["bonjour", "salut", "coucou", "hello", "yo", "aide", "moi", "sophia", "non", "oui", "stop", "start"]
 
-# Liste noire pour éviter que Sophia ne s'appelle "Bonjour"
-INVALID_NAMES = ["bonjour", "salut", "coucou", "hello", "yo", "aide", "moi", "sophia", "non", "oui", "stop", "start", "commencer"]
-
-# --- CONTENU DU BOT ---
+# --- CONTENU ---
 NICKNAMES = {
-    "F": ["ma guerrière", "ma grande", "sœurette", "ma belle"],
-    "M": ["l'ami", "soldat", "mon grand", "frérot"],
-    "N": ["camarade", "l'ami(e)"]
+    "F": ["ma belle", "ma chérie", "ma grande", "mon cœur"],
+    "M": ["mon grand", "l'ami", "mon cœur", "frérot"],
+    "N": ["toi", "mon ami(e)", "trésor"]
 }
 
 PROACTIVE_MSGS = {
-    "morning": [
-        "Debout {name} 🛡️. Le monde est bruyant, mais ici c'est calme. Prends une seconde pour t'ancrer avant d'y aller.",
-        "Salut {name}. J'espère que tu es en sécurité ce matin. N'oublie pas : une chose à la fois. Je veille.",
-    ],
-    "noon": [
-        "Pause {name} ⚓. Vérification système : tu as mangé ? Tu as bu de l'eau ? La base d'abord, le reste après.",
-    ],
-    "night": [
-        "La garde est finie {name} 🌙. Si tu es à l'abri, ferme les yeux. Sinon, dis-le moi. Je reste en veille.",
-        "Fin de journée. Dépose le sac à dos. Tu as fait de ton mieux. Repos.",
-    ]
+    "morning": ["Coucou {name} ☀️. Juste un petit message pour te dire que je pense à toi.", "Bonjour {name} ! J'espère que tu as pu te reposer un peu. ❤️"],
+    "noon": ["Petite pause {name} 🥪. Respire. Ne laisse pas la pression monter."],
+    "night": ["C'est l'heure de poser les armes {name} 🌙. La journée est finie.", "Douce nuit {name} ✨. On ne règle plus les problèmes à cette heure-ci."]
 }
 
 # --- CLASSE LOGIQUE ---
@@ -71,21 +60,11 @@ class SophiaBrain:
         g = genre if genre in ["F", "M"] else "N"
         return random.choice(NICKNAMES[g])
 
-    def get_role_tone(self, age):
-        try:
-            age_int = int(age)
-            if age_int < 18:
-                return "GARDIENNE PROTECTRICE (Ton très sécurisant, vérifie les besoins vitaux)."
-            else:
-                return "ALLIÉE SOLIDE (Ton direct, pragmatique, sans pitié pour ceux qui te font du mal)."
-        except:
-            return "GARDIENNE (Ton standard)."
-
     def should_activate_rag(self, message: str) -> bool:
         if not message: return False
         msg = message.lower().strip()
-        if len(msg.split()) > 4: return True
-        keywords = ["triste", "seul", "peur", "colère", "mal", "aide", "famille", "rue", "froid", "faim", "argent", "police", "abri"]
+        if len(msg.split()) > 3: return True
+        keywords = ["triste", "seul", "peur", "colère", "mal", "aide", "famille", "travail", "boulot", "vide", "fatigue", "pleure", "sécurité", "confiance"]
         if any(k in msg for k in keywords): return True
         return False
 
@@ -94,24 +73,19 @@ class SophiaBrain:
         try:
             res = await asyncio.wait_for(asyncio.to_thread(rag_query, query, 2), timeout=5.0)
             return res.get("context", "")
-        except Exception as e:
-            logger.error(f"❌ Erreur RAG : {e}")
-            return ""
+        except: return ""
 
-    def generate_response(self, messages, temperature=0.6):
-        payload = {
-            "model": MODEL_NAME, "messages": messages, 
-            "temperature": temperature, "max_tokens": 350, "top_p": 0.9, "repetition_penalty": 1.15
-        }
+    def generate_response(self, messages, temperature=0.7):
+        payload = {"model": MODEL_NAME, "messages": messages, "temperature": temperature, "max_tokens": 400, "top_p": 0.9, "repetition_penalty": 1.15}
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         try:
             r = requests.post(MODEL_API_URL, json=payload, headers=headers, timeout=30)
             if r.status_code == 200:
                 content = r.json()["choices"][0]["message"]["content"].strip()
                 return content.replace("Bonjour", "").replace("Bonsoir", "").replace("Je suis là", "")
-        except Exception as e:
-            logger.error(f"API Error: {e}")
+        except Exception as e: logger.error(f"API Error: {e}")
         return "Je t'écoute... continue."
+    # app.py (V100 - PARTIE 2/2)
 
 # --- CLASSE BOT ---
 class SophiaBot:
@@ -124,6 +98,7 @@ class SophiaBot:
         self.app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
         self.app.add_handler(CommandHandler("start", self.start))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+        self.app.add_error_handler(self.error_handler)
 
     # --- 1. START & HARD RESET ---
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -137,9 +112,9 @@ class SophiaBot:
         self._setup_schedule(context, user_id)
 
         await update.message.reply_text(
-            "Salut. Je suis Sophia.\n\n"
-            "Je ne suis pas une psy, je suis une gardienne. Ici, c'est ta zone de repli.\n"
-            "Pour commencer : c'est quoi ton vrai prénom ?",
+            "Salut. C'est Sophia.\n\n"
+            "On efface tout, on recommence. Ici, tu peux être toi-même.\n"
+            "C'est quoi ton prénom ?",
             reply_markup=ReplyKeyboardRemove()
         )
 
@@ -147,7 +122,7 @@ class SophiaBot:
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = update.message.text.strip()
         
-        # FIX V99 : AUTO-START si l'état est inconnu
+        # AUTO-START FIX
         state = context.user_data.get("state")
         if not state:
             await self.start(update, context)
@@ -163,28 +138,19 @@ class SophiaBot:
             await self._handle_emergency_dialog(update, context, msg)
             return
 
-        # ONBOARDING (FILTRE PRÉNOM)
+        # ONBOARDING
         if state == "ASK_NAME":
-            # Nettoyage : on prend le premier mot et on enlève la ponctuation
             raw_name = msg.split()[0]
             clean_name = re.sub(r'[^\w\s]', '', raw_name).capitalize()
-            
-            # Filtre anti-bêtise
             if clean_name.lower() in INVALID_NAMES or len(clean_name) < 2:
-                await update.message.reply_text("Ça m'étonnerait que ce soit ton prénom. 😉\nDonne-moi ton vrai prénom (ou un pseudo), pour qu'on parte sur de bonnes bases.")
+                await update.message.reply_text("Donne-moi ton vrai prénom (ou un pseudo), s'il te plaît. J'ai besoin de savoir à qui je parle. 😊")
                 return
-                
             profile["name"] = clean_name
             context.user_data["state"] = "ASK_GENDER"
             
             keyboard = [['Une Femme 👩', 'Un Homme 👨'], ['Neutre 👤']]
             markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-            
-            await update.message.reply_text(
-                f"Enchantée {profile['name']}. \n\n"
-                "Pour savoir comment je m'adresse à toi : on part sur du féminin, du masculin ou du neutre ?",
-                reply_markup=markup
-            )
+            await update.message.reply_text(f"Enchantée {profile['name']}. Pour qu'on soit à l'aise, je m'adresse à toi comment ?", reply_markup=markup)
             return
 
         if state == "ASK_GENDER":
@@ -193,46 +159,40 @@ class SophiaBot:
             else: profile["genre"] = "N"
             
             context.user_data["state"] = "ASK_AGE"
-            await update.message.reply_text(
-                "C'est noté. \n\n"
-                "Dernière info technique : tu as quel âge à peu près ? \n"
-                "(C'est pour adapter mon langage, je ne parle pas pareil à 15 ans et à 40 ans).",
-                reply_markup=ReplyKeyboardRemove()
-            )
+            await update.message.reply_text("C'est noté. Une dernière chose : tu as quel âge à peu près ?", reply_markup=ReplyKeyboardRemove())
             return
 
         if state == "ASK_AGE":
             profile["age"] = msg
             context.user_data["state"] = "DIAG_1"
-            
             nickname = self.brain.get_dynamic_nickname(profile["genre"])
             await update.message.reply_text(
                 f"Merci {nickname}. On peut y aller.\n\n"
-                "Première vérification (la base) : Ta jauge d'énergie vitale, elle est à combien sur 10 là tout de suite ?"
+                "Dis-moi franchement : comment tu te sens à l'intérieur, là tout de suite ? (Vide, Tempête, Calme... ?)"
             )
             return
 
-        # ANAMNÈSE (RÉALISTE)
+        # ANAMNÈSE
         if state == "DIAG_1":
             profile["climat"] = msg
             context.user_data["state"] = "DIAG_2"
-            await update.message.reply_text("Reçu. \n\nEst-ce que tu es seul(e) face à ça, ou est-ce que tu as des alliés fiables autour de toi ?")
+            await update.message.reply_text("Je t'entends. Et qu'est-ce qui pèse le plus lourd ce soir ? Une personne, le travail, ou juste la vie ?")
             return
 
         if state == "DIAG_2":
             profile["entourage"] = msg
             context.user_data["state"] = "DIAG_3"
-            await update.message.reply_text("Compris. \n\nDe quoi as-tu besoin *concrètement* ce soir ? D'un plan d'action pour t'en sortir, ou juste d'un endroit sûr pour lâcher la pression ?")
+            await update.message.reply_text("Je vois. Pour t'aider maintenant : tu as besoin qu'on cherche une solution concrète (un plan), ou juste de vider ton sac et d'être écouté(e) ?")
             return
 
         if state == "DIAG_3":
             profile["besoin"] = msg
             context.user_data["state"] = "CHATTING"
             
-            q = f"Problème: {profile.get('climat')} Besoin: {profile.get('besoin')}"
+            q = f"Problème: {profile.get('climat')} Cause: {profile.get('entourage')} Besoin: {profile.get('besoin')}"
             context.user_data["rag_prefetch"] = await self.brain.get_rag_context(q)
             
-            await update.message.reply_text(f"C'est clair. Tu es en sécurité ici. Raconte-moi ce qui se passe, sans filtre.")
+            await update.message.reply_text(f"C'est clair. Je suis avec toi. Raconte-moi ce qui se passe.")
             return
 
         # CHAT LIBRE
@@ -248,30 +208,28 @@ class SophiaBot:
             rag_context = await self.brain.get_rag_context(msg)
         context.user_data["rag_prefetch"] = None 
 
-        tone = self.brain.get_role_tone(profile.get("age"))
         nickname = self.brain.get_dynamic_nickname(profile.get("genre"))
         
-        # PROMPT "ANTI-CALIFORNIE"
+        # --- PROMPT V100 : L'ALLIÉE INTELLIGENTE ---
         system_prompt = f"""
-        Tu es Sophia. {tone} pour {profile['name']} (surnom: {nickname}).
+        Tu es Sophia. Une figure de grande sœur ou de meilleure amie très lucide et protectrice pour {profile['name']} (surnom: {nickname}).
         
-        ### TON IDENTITÉ : LA GARDIENNE ###
-        Tu n'es pas une "Maman Gâteau", tu es une "Gardienne". Solide, ancrée, protectrice.
-        Tu ne vends pas du rêve, tu gères la réalité.
-        
-        ### RÈGLE D'OR : LA PYRAMIDE DE MASLOW ###
-        Avant de proposer du "bien-être" (bain, thé, film), VÉRIFIE TOUJOURS LA SÉCURITÉ MATÉRIELLE.
-        - Si l'utilisateur semble précaire (rue, pas d'argent) -> NE PARLE PAS de confort bourgeois. Propose des ressources d'aide (115, abri).
-        - Si l'utilisateur est en sécurité -> Alors tu peux proposer du réconfort.
+        ### TON CARACTÈRE ###
+        1. **CHALEUREUSE** : Tu utilises des emojis doux (❤️, ✨, 🌿). Tu es proche.
+        2. **ALLIÉE** : Si l'utilisateur est blessé, tu prends son parti ("C'est injuste", "Tu mérites mieux").
+        3. **SOLIDE** : Tu ne paniques pas. Tu es le pilier.
+        4. **ADAPTATIVE** :
+           - S'il veut AGIR : Tu deviens coach ("Ok, on fait un plan").
+           - S'il veut PARLER : Tu deviens cocon ("Je t'écoute, lâche tout").
         
         ### CONTEXTE ###
         - État: {profile.get('climat')}
-        - Soutien: {profile.get('entourage')}
-        - Besoin: {profile.get('besoin')}
+        - Poids: {profile.get('entourage')}
+        - Attente: {profile.get('besoin')}
         
-        {f"### ARCHIVES (RAG) ### {rag_context}" if rag_context else "### PAS D'ARCHIVE ### Si tu ne sais pas (horaires, lieux), dis 'Je ne veux pas te dire de bêtises, vérifie sur Google Maps'."}
+        {f"### RESSOURCES (RAG) ###\n{rag_context}\nUtilise ces conseils intelligemment." if rag_context else ""}
         
-        Réponds en 3 phrases max. Utilise des emojis d'ancrage (⚓️, 🕯️, 🛡️) plutôt que de fête.
+        Réponds en 3-4 phrases. Finis par une question pour l'aider à avancer.
         """
 
         msgs = [{"role": "system", "content": system_prompt}] + history[-6:]
@@ -305,7 +263,6 @@ class SophiaBot:
 
     # --- SCHEDULER ---
     def _setup_schedule(self, context, chat_id):
-        # Nettoyage
         try:
             current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
             for job in current_jobs: job.schedule_removal()
@@ -337,12 +294,11 @@ class SophiaBot:
         except Exception as e:
             logger.warning(f"❌ Echec envoi proactif : {e}")
 
+    async def error_handler(self, update, context):
+        logger.error(f"Erreur Update: {context.error}")
+
 # --- MAIN ---
 if __name__ == "__main__":
-    if not TELEGRAM_BOT_TOKEN:
-        print("❌ TOKEN MANQUANT")
-        sys.exit(1)
-    
     bot = SophiaBot()
-    logger.info("Soph_IA V99 (Auto-Start) est en ligne...")
+    logger.info("Soph_IA V100 (Retour Empathie) en ligne...")
     bot.app.run_polling()
